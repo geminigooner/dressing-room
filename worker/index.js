@@ -13,19 +13,19 @@ export default {
         return json({ error: "POST only" }, 405);
       }
       if (!env.GEMINI_API_KEY) {
-        return json({ error: "GEMINI_API_KEY not set" }, 500);
+        return json({ error: "GEMINI_API_KEY not set in Cloudflare environment" }, 500);
       }
 
       let body;
       try {
         body = await request.json();
       } catch {
-        return json({ error: "bad JSON" }, 400);
+        return json({ error: "Invalid JSON payload" }, 400);
       }
 
       const { model, contents, generationConfig } = body;
       if (!model || !contents) {
-        return json({ error: "need model and contents" }, 400);
+        return json({ error: "Missing required model or contents parameter" }, 400);
       }
 
       const res = await fetch(`${GOOGLE}/${model}:generateContent`, {
@@ -39,18 +39,20 @@ export default {
 
       const data = await res.json();
 
-      // log the prompt, but never let a DB error kill a generation
+      // Log the prompt run if D1 DB binding exists, but never let DB error break generation
       try {
-        await env.DB.prepare(
-          "INSERT INTO runs (model, prompt, status, created_at) VALUES (?, ?, ?, ?)"
-        )
-          .bind(
-            model,
-            JSON.stringify(contents).slice(0, 2000),
-            res.status,
-            Date.now()
+        if (env.DB) {
+          await env.DB.prepare(
+            "INSERT INTO runs (model, prompt, status, created_at) VALUES (?, ?, ?, ?)"
           )
-          .run();
+            .bind(
+              model,
+              JSON.stringify(contents).slice(0, 2000),
+              res.status,
+              Date.now()
+            )
+            .run();
+        }
       } catch (e) {
         console.log("db log skipped:", e.message);
       }

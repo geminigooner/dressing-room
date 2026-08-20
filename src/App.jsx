@@ -11,11 +11,15 @@ import {
   Grid,
   Sparkle,
   User,
+  Loader2,
+  FileText,
+  AlertCircle,
   Image as ImageIcon
 } from 'lucide-react';
+import { editPhoto, fileToPart } from './lib/api.js';
 
 export default function App() {
-  // State management for uploads and inputs
+  // State management for uploads, prompts, and inference
   const [basePhoto, setBasePhoto] = useState(null);
   const [basePhotoPreview, setBasePhotoPreview] = useState(null);
 
@@ -23,6 +27,12 @@ export default function App() {
   const [outfitPhotoPreview, setOutfitPhotoPreview] = useState(null);
 
   const [prompt, setPrompt] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [resultImage, setResultImage] = useState(null);
+  const [resultText, setResultText] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
+
+  // Tab & navigation state
   const [activeTab, setActiveTab] = useState('create');
   const [activeNav, setActiveNav] = useState('create');
   const [showMenuModal, setShowMenuModal] = useState(false);
@@ -39,6 +49,8 @@ export default function App() {
       setBasePhoto(file);
       const url = URL.createObjectURL(file);
       setBasePhotoPreview(url);
+      // Clear previous error on new input
+      setErrorMessage(null);
     }
   };
 
@@ -49,6 +61,7 @@ export default function App() {
       setOutfitPhoto(file);
       const url = URL.createObjectURL(file);
       setOutfitPhotoPreview(url);
+      setErrorMessage(null);
     }
   };
 
@@ -67,7 +80,84 @@ export default function App() {
     if (outfitInputRef.current) outfitInputRef.current.value = '';
   };
 
-  // Mock sample recent looks list
+  // Main Generation Pipeline Handler
+  const handleGenerate = async () => {
+    if (!basePhoto) {
+      baseInputRef.current?.click();
+      return;
+    }
+
+    setIsLoading(true);
+    setResultImage(null);
+    setResultText(null);
+    setErrorMessage(null);
+
+    try {
+      // 1. Convert photo inputs to parts
+      const photoPart = await fileToPart(basePhoto);
+      const garmentPart = outfitPhoto ? await fileToPart(outfitPhoto) : null;
+
+      // 2. Call editPhoto from api.js (proxied to /api/gemini)
+      const response = await editPhoto(photoPart, garmentPart, prompt);
+
+      if (!response) {
+        setResultText('Generation complete. No visual output was returned.');
+      } else if (typeof response === 'string') {
+        const isImageUrl =
+          response.startsWith('data:image/') ||
+          response.startsWith('http://') ||
+          response.startsWith('https://') ||
+          response.startsWith('blob:');
+
+        if (isImageUrl) {
+          setResultImage(response);
+        } else {
+          // Display returned text response
+          setResultText(response);
+        }
+      } else if (typeof response === 'object') {
+        const img = response.image || response.url || response.src || response.dataUrl;
+        const txt = response.text || response.message || response.description;
+
+        if (img) {
+          setResultImage(img);
+        } else if (txt) {
+          setResultText(txt);
+        } else {
+          setResultText(JSON.stringify(response, null, 2));
+        }
+      }
+    } catch (err) {
+      console.error('Error during photo edit generation:', err);
+      setErrorMessage(err?.message || 'Failed to generate style. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Trigger download of generated output
+  const handleDownload = () => {
+    if (resultImage) {
+      const a = document.createElement('a');
+      a.href = resultImage;
+      a.download = `dressing-room-look-${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else if (resultText) {
+      const blob = new Blob([resultText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dressing-room-style-${Date.now()}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  // Mock recent looks list
   const recentLooks = [1, 2, 3, 4, 5, 6];
 
   return (
@@ -200,7 +290,10 @@ export default function App() {
                   className="prompt-textarea"
                   value={prompt}
                   maxLength={500}
-                  onChange={(e) => setPrompt(e.target.value)}
+                  onChange={(e) => {
+                    setPrompt(e.target.value);
+                    setErrorMessage(null);
+                  }}
                   placeholder="e.g. pink satin mini dress, same pose, softer glam, same room..."
                 />
                 <span className="prompt-char-count">{prompt.length} / 500</span>
@@ -215,10 +308,24 @@ export default function App() {
             type="button"
             id="btn-generate"
             className="generate-btn"
-            onClick={() => {}}
+            disabled={isLoading || !basePhoto}
+            onClick={handleGenerate}
+            style={{
+              opacity: isLoading || !basePhoto ? 0.7 : 1,
+              cursor: isLoading ? 'wait' : !basePhoto ? 'pointer' : 'pointer',
+            }}
           >
-            <span>Generate</span>
-            <Sparkles size={18} />
+            {isLoading ? (
+              <>
+                <Loader2 size={18} className="spinner-icon" />
+                <span>Styling look...</span>
+              </>
+            ) : (
+              <>
+                <span>Generate</span>
+                <Sparkles size={18} />
+              </>
+            )}
           </button>
         </div>
       </section>
@@ -233,6 +340,7 @@ export default function App() {
 
         {/* Comparison Before / After */}
         <div className="comparison-container">
+          {/* Left: Original / Before */}
           <div className={`comparison-box ${basePhotoPreview ? 'filled' : ''}`}>
             {basePhotoPreview ? (
               <img src={basePhotoPreview} alt="Before preview" className="preview-image" />
@@ -248,19 +356,64 @@ export default function App() {
             <ArrowRight size={18} strokeWidth={2.4} />
           </div>
 
-          <div className="comparison-box">
-            <span className="comparison-box-label">After</span>
-            <ImageIcon size={30} className="comparison-placeholder-icon" />
+          {/* Right: Result / After */}
+          <div
+            className={`comparison-box ${
+              isLoading
+                ? 'is-loading'
+                : errorMessage
+                ? 'has-error'
+                : resultImage || resultText
+                ? 'filled'
+                : ''
+            }`}
+          >
+            {isLoading ? (
+              <div className="comparison-loading-content">
+                <Loader2 size={24} className="spinner-icon" />
+                <span className="loading-text">Generating look...</span>
+              </div>
+            ) : errorMessage ? (
+              <div className="result-error-card">
+                <AlertCircle size={22} className="result-error-icon" />
+                <span className="result-error-title">Generation Error</span>
+                <p className="result-error-body">{errorMessage}</p>
+              </div>
+            ) : resultImage ? (
+              <img src={resultImage} alt="After styled look" className="preview-image" />
+            ) : resultText ? (
+              <div className="result-text-card">
+                <FileText size={20} style={{ color: 'var(--accent-pink)', marginBottom: 4 }} />
+                <p className="result-text-body">{resultText}</p>
+              </div>
+            ) : (
+              <>
+                <span className="comparison-box-label">After</span>
+                <ImageIcon size={30} className="comparison-placeholder-icon" />
+              </>
+            )}
           </div>
         </div>
 
         {/* Action Buttons */}
         <div className="result-actions-grid">
-          <button type="button" id="btn-download" className="result-action-btn">
+          <button
+            type="button"
+            id="btn-download"
+            className="result-action-btn"
+            onClick={handleDownload}
+            disabled={!resultImage && !resultText}
+            style={{ opacity: resultImage || resultText ? 1 : 0.45 }}
+          >
             <span>Download</span>
             <Download size={14} />
           </button>
-          <button type="button" id="btn-save-gallery" className="result-action-btn">
+          <button
+            type="button"
+            id="btn-save-gallery"
+            className="result-action-btn"
+            onClick={() => setShowGalleryModal(true)}
+          >
             <span>Save to Gallery</span>
             <Heart size={14} />
           </button>

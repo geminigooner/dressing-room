@@ -145,6 +145,15 @@ export default function GeminiAssistantSheet({
 
   // Quick suggestion prompts
   const quickPrompts = [
+    workspaceContext.hasResultImage && workspaceContext.hasBasePhoto
+      ? "What changed in this look?"
+      : null,
+    workspaceContext.hasResultImage && workspaceContext.hasBasePhoto
+      ? "Try again & preserve my face and body"
+      : null,
+    workspaceContext.hasResultImage && workspaceContext.hasOutfitReference
+      ? "Is this close to the outfit reference?"
+      : null,
     workspaceContext.hasBasePhoto && !workspaceContext.hasResultImage
       ? "Generate this look"
       : null,
@@ -157,7 +166,7 @@ export default function GeminiAssistantSheet({
     workspaceContext.prompt
       ? "How can I improve my styling prompt?"
       : "Suggest a stylish outfit idea",
-  ].filter(Boolean);
+  ].filter(Boolean).slice(0, 4);
 
   return (
     <div className="modal-overlay" onClick={onClose} id="gemini-assistant-overlay">

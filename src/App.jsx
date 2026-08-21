@@ -18,10 +18,23 @@ import {
   Trash2,
   Check,
   Calendar,
-  ExternalLink
+  ExternalLink,
+  UserCheck
 } from 'lucide-react';
-import { editPhoto, fileToPart, fetchGallery, saveToGallery, deleteFromGallery } from './lib/api.js';
+import { editPhoto, fileToPart, imageSourceToPart, fetchGallery, saveToGallery, deleteFromGallery } from './lib/api.js';
+import {
+  getIdentityReferences,
+  saveIdentityReference,
+  deleteIdentityReference,
+  getSelectedIdentityIds,
+  saveSelectedIdentityIds,
+  getSegmentWeights,
+  saveSegmentWeights,
+  DEFAULT_IDENTITY_CONTRACT,
+} from './lib/identity.js';
 import GeminiAssistantSheet from './components/GeminiAssistantSheet.jsx';
+import IdentityBank from './components/IdentityBank.jsx';
+import IdentityReferenceSelector from './components/IdentityReferenceSelector.jsx';
 
 export default function App() {
   // State management for uploads, prompts, and inference
@@ -37,6 +50,12 @@ export default function App() {
   const [resultText, setResultText] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
 
+  // Identity Reference Bank State
+  const [identityReferences, setIdentityReferences] = useState([]);
+  const [selectedIdentityIds, setSelectedIdentityIds] = useState([]);
+  const [segmentWeights, setSegmentWeights] = useState({}); // { [refId]: 'auto' | 'face' | 'hair' | 'body' }
+  const [identityContract] = useState(DEFAULT_IDENTITY_CONTRACT);
+
   // Gallery state
   const [galleryItems, setGalleryItems] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -47,8 +66,8 @@ export default function App() {
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
 
   // Tab & navigation state
-  const [activeTab, setActiveTab] = useState('create'); // 'create' | 'gallery'
-  const [activeNav, setActiveNav] = useState('create'); // 'create' | 'looks' | etc.
+  const [activeTab, setActiveTab] = useState('create'); // 'create' | 'identity' | 'gallery'
+  const [activeNav, setActiveNav] = useState('create'); // 'create' | 'identity' | 'looks' | 'outfits' | 'profile'
   const [showMenuModal, setShowMenuModal] = useState(false);
 
   // File input refs
@@ -59,31 +78,140 @@ export default function App() {
   const workspaceContext = {
     hasBasePhoto: Boolean(basePhoto),
     basePhotoName: basePhoto?.name || (basePhotoPreview ? 'Uploaded photo' : null),
+    basePhotoSource: basePhoto || basePhotoPreview,
     hasOutfitReference: Boolean(outfitPhoto),
     outfitPhotoName: outfitPhoto?.name || (outfitPhotoPreview ? 'Outfit reference' : null),
+    outfitPhotoSource: outfitPhoto || outfitPhotoPreview,
+    identityReferencesCount: identityReferences.length,
+    selectedIdentityReferences: identityReferences
+      .filter((r) => selectedIdentityIds.includes(r.id))
+      .map((r) => ({
+        id: r.id,
+        label: r.label,
+        tags: r.tags,
+        notes: r.notes,
+        segmentRole: segmentWeights[r.id] || 'auto',
+      })),
+    segmentWeights,
+    identityContract,
     prompt: prompt || '',
     isGenerating: isLoading,
     hasResultImage: Boolean(resultImage),
+    resultImageSource: resultImage,
     hasResultText: Boolean(resultText),
     activeTab,
     galleryCount: galleryItems.length,
     galleryItems: galleryItems.map((item) => ({ id: item.id, prompt: item.prompt, createdAt: item.created_at || item.createdAt })),
-    selectedLook: selectedLook ? { id: selectedLook.id, prompt: selectedLook.prompt } : null,
+    selectedLook: selectedLook
+      ? {
+          id: selectedLook.id,
+          prompt: selectedLook.prompt,
+          imageUrl: selectedLook.imageUrl || selectedLook.dataUrl,
+        }
+      : null,
     lastErrorMessage: errorMessage,
   };
 
-  // Load saved gallery looks on mount (survives refresh)
+  // Load saved gallery looks and identity references on mount (survives refresh)
   useEffect(() => {
-    async function loadGallery() {
+    async function loadInitialData() {
       try {
-        const items = await fetchGallery();
+        const [items, idRefs] = await Promise.all([
+          fetchGallery(),
+          getIdentityReferences(),
+        ]);
         setGalleryItems(items || []);
+        setIdentityReferences(idRefs || []);
+
+        const savedSelectedIds = getSelectedIdentityIds();
+        if (savedSelectedIds && savedSelectedIds.length > 0) {
+          // Verify selected IDs still exist in references
+          const existingIds = (idRefs || []).map((r) => r.id);
+          const validSelected = savedSelectedIds.filter((id) => existingIds.includes(id));
+          setSelectedIdentityIds(validSelected);
+        } else if (idRefs && idRefs.length > 0) {
+          // Default select up to 2 initial references
+          const autoSelect = idRefs.slice(0, 2).map((r) => r.id);
+          setSelectedIdentityIds(autoSelect);
+          saveSelectedIdentityIds(autoSelect);
+        }
+
+        const savedWeights = getSegmentWeights();
+        if (savedWeights && typeof savedWeights === 'object') {
+          setSegmentWeights(savedWeights);
+        }
       } catch (err) {
-        console.error('Failed to load gallery items:', err);
+        console.error('Failed to load initial data:', err);
       }
     }
-    loadGallery();
+    loadInitialData();
   }, []);
+
+  // Handle Identity Reference Operations
+  const handleSaveIdentityReference = (savedItem) => {
+    setIdentityReferences((prev) => {
+      const filtered = prev.filter((r) => r.id !== savedItem.id);
+      return [savedItem, ...filtered];
+    });
+    // Auto select if under limit
+    if (selectedIdentityIds.length < 4 && !selectedIdentityIds.includes(savedItem.id)) {
+      const updated = [...selectedIdentityIds, savedItem.id];
+      setSelectedIdentityIds(updated);
+      saveSelectedIdentityIds(updated);
+    }
+  };
+
+  const handleDeleteIdentityReference = async (id) => {
+    await deleteIdentityReference(id);
+    setIdentityReferences((prev) => prev.filter((r) => r.id !== id));
+    setSelectedIdentityIds((prev) => {
+      const updated = prev.filter((sid) => sid !== id);
+      saveSelectedIdentityIds(updated);
+      return updated;
+    });
+    setSegmentWeights((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      saveSegmentWeights(next);
+      return next;
+    });
+  };
+
+  const handleToggleFavoriteIdentity = async (id) => {
+    const target = identityReferences.find((r) => r.id === id);
+    if (!target) return;
+    const updatedItem = { ...target, favorite: !target.favorite };
+    await saveIdentityReference(updatedItem);
+    setIdentityReferences((prev) =>
+      prev.map((r) => (r.id === id ? updatedItem : r))
+    );
+  };
+
+  const handleToggleSelectIdentity = (id) => {
+    setSelectedIdentityIds((prev) => {
+      let updated;
+      if (prev.includes(id)) {
+        updated = prev.filter((sid) => sid !== id);
+      } else {
+        if (prev.length >= 4) {
+          // Replace last one or ignore
+          updated = [...prev.slice(1), id];
+        } else {
+          updated = [...prev, id];
+        }
+      }
+      saveSelectedIdentityIds(updated);
+      return updated;
+    });
+  };
+
+  const handleSetSegmentWeight = (id, role) => {
+    setSegmentWeights((prev) => {
+      const updated = { ...prev, [id]: role };
+      saveSegmentWeights(updated);
+      return updated;
+    });
+  };
 
   // Handle Base Photo Upload
   const handleBasePhotoChange = (e) => {
@@ -145,8 +273,23 @@ export default function App() {
       const photoPart = await fileToPart(basePhoto);
       const garmentPart = outfitPhoto ? await fileToPart(outfitPhoto) : null;
 
-      // 2. Call editPhoto from api.js (proxied to /api/gemini)
-      const response = await editPhoto(photoPart, garmentPart, effectivePrompt);
+      // 2. Resolve selected identity references as image parts with segment role guidance
+      const activeIdentityRefs = identityReferences.filter((r) =>
+        selectedIdentityIds.includes(r.id)
+      );
+      const identityParts = [];
+      for (const idRef of activeIdentityRefs) {
+        const part = await imageSourceToPart(idRef.imageUrl || idRef.dataUrl);
+        if (part) {
+          part.role = segmentWeights[idRef.id] || 'auto';
+          part.label = idRef.label || 'Identity Reference';
+          part.tags = idRef.tags || [];
+          identityParts.push(part);
+        }
+      }
+
+      // 3. Call editPhoto from api.js (proxied to /api/gemini) with identity references
+      const response = await editPhoto(photoPart, garmentPart, effectivePrompt, identityParts);
 
       if (!response) {
         setResultText('Generation complete. No visual output was returned.');
@@ -320,6 +463,11 @@ export default function App() {
         }
         return { success: false, message: 'Missing prompt text.' };
       }
+      case 'open_identity_bank': {
+        setActiveTab('identity');
+        setActiveNav('identity');
+        return { success: true, message: 'Opened Identity Reference Bank.' };
+      }
       default:
         return { success: false, message: `Unsupported tool "${toolName}".` };
     }
@@ -375,7 +523,7 @@ export default function App() {
         </button>
       </header>
 
-      {/* Segmented Control Bar (Create vs Gallery) */}
+      {/* Segmented Control Bar (Create vs Identity vs Gallery) */}
       <div className="tab-toggle-bar" id="mode-tab-toggle">
         <button
           type="button"
@@ -388,6 +536,18 @@ export default function App() {
         >
           <Sparkles size={15} />
           <span>Create</span>
+        </button>
+        <button
+          type="button"
+          id="tab-identity"
+          className={`tab-toggle-item ${activeTab === 'identity' ? 'active' : ''}`}
+          onClick={() => {
+            setActiveTab('identity');
+            setActiveNav('identity');
+          }}
+        >
+          <UserCheck size={15} />
+          <span>Identity ({identityReferences.length})</span>
         </button>
         <button
           type="button"
@@ -513,6 +673,20 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* Identity References Selection Strip with Segment-Specific Focus */}
+            <IdentityReferenceSelector
+              identityReferences={identityReferences}
+              selectedIdentityIds={selectedIdentityIds}
+              segmentWeights={segmentWeights}
+              prompt={prompt}
+              onToggleSelect={handleToggleSelectIdentity}
+              onSetSegmentWeight={handleSetSegmentWeight}
+              onOpenIdentityTab={() => {
+                setActiveTab('identity');
+                setActiveNav('identity');
+              }}
+            />
 
             {/* Generate Button */}
             <div className="generate-btn-wrap">
@@ -716,6 +890,23 @@ export default function App() {
         </>
       )}
 
+      {/* IDENTITY TAB CONTENT */}
+      {activeTab === 'identity' && (
+        <IdentityBank
+          identityReferences={identityReferences}
+          selectedIdentityIds={selectedIdentityIds}
+          identityContract={identityContract}
+          onSaveReference={handleSaveIdentityReference}
+          onDeleteReference={handleDeleteIdentityReference}
+          onToggleSelect={handleToggleSelectIdentity}
+          onToggleFavorite={handleToggleFavoriteIdentity}
+          onGoToCreate={() => {
+            setActiveTab('create');
+            setActiveNav('create');
+          }}
+        />
+      )}
+
       {/* GALLERY TAB CONTENT */}
       {activeTab === 'gallery' && (
         <section className="gallery-section-card" id="gallery-view-section">
@@ -822,15 +1013,15 @@ export default function App() {
 
         <button
           type="button"
-          id="nav-favorites"
-          className={`nav-item ${activeNav === 'favorites' ? 'active' : ''}`}
+          id="nav-identity"
+          className={`nav-item ${activeNav === 'identity' && activeTab === 'identity' ? 'active' : ''}`}
           onClick={() => {
-            setActiveNav('favorites');
-            setActiveTab('gallery');
+            setActiveNav('identity');
+            setActiveTab('identity');
           }}
         >
-          <Heart size={20} />
-          <span className="nav-label">Favorites</span>
+          <UserCheck size={20} />
+          <span className="nav-label">Identity</span>
         </button>
 
         <button
@@ -949,7 +1140,7 @@ export default function App() {
         aria-label="Open Gemini Assistant"
       >
         <span className="gemini-pill-sparkle">✦</span>
-        <span className="gemini-pill-text">Gemini — How can I help?</span>
+        <span className="gemini-pill-text">Gemini</span>
       </button>
 
       {/* Persistent Gemini Assistant Panel / Sheet */}

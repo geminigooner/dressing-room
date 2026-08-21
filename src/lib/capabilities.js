@@ -9,13 +9,13 @@ export const CAPABILITY_REGISTRY = [
   {
     id: 'generate_image_edit',
     name: 'Generate Image Edit',
-    description: 'Runs the AI virtual dressing room styling model to edit or transfer clothing on the base photo according to prompt and optional outfit reference.',
+    description: 'Runs the AI virtual dressing room styling model to edit or transfer clothing on the base photo according to prompt and optional outfit reference. Can accept refined retry instructions that enforce strict face, body, or background preservation.',
     status: 'available',
     parameters: {
       prompt: {
         type: 'string',
         required: false,
-        description: 'Optional styling prompt to use or override before generating.',
+        description: 'Styling prompt or refined retry instruction with targeted preservation clauses (e.g. face, body, background, or outfit reference fidelity constraints).',
       },
     },
     preconditions: ['hasBasePhoto'],
@@ -81,6 +81,13 @@ export const CAPABILITY_REGISTRY = [
         description: 'The exact new prompt text to insert into the input box.',
       },
     },
+  },
+  {
+    id: 'open_identity_bank',
+    name: 'Open Identity Reference Bank',
+    description: 'Switches view to the Identity Reference Bank where user identity photos, tags, and identity fidelity contract are managed.',
+    status: 'available',
+    parameters: {},
   },
 ];
 

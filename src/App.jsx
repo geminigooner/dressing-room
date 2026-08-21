@@ -21,6 +21,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { editPhoto, fileToPart, fetchGallery, saveToGallery, deleteFromGallery } from './lib/api.js';
+import GeminiAssistantSheet from './components/GeminiAssistantSheet.jsx';
 
 export default function App() {
   // State management for uploads, prompts, and inference
@@ -42,6 +43,9 @@ export default function App() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [selectedLook, setSelectedLook] = useState(null); // For Lightbox detail view
 
+  // Gemini Assistant Drawer state
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+
   // Tab & navigation state
   const [activeTab, setActiveTab] = useState('create'); // 'create' | 'gallery'
   const [activeNav, setActiveNav] = useState('create'); // 'create' | 'looks' | etc.
@@ -50,6 +54,23 @@ export default function App() {
   // File input refs
   const baseInputRef = useRef(null);
   const outfitInputRef = useRef(null);
+
+  // Live Workspace Context Snapshot for Gemini Assistant
+  const workspaceContext = {
+    hasBasePhoto: Boolean(basePhoto),
+    basePhotoName: basePhoto?.name || (basePhotoPreview ? 'Uploaded photo' : null),
+    hasOutfitReference: Boolean(outfitPhoto),
+    outfitPhotoName: outfitPhoto?.name || (outfitPhotoPreview ? 'Outfit reference' : null),
+    prompt: prompt || '',
+    isGenerating: isLoading,
+    hasResultImage: Boolean(resultImage),
+    hasResultText: Boolean(resultText),
+    activeTab,
+    galleryCount: galleryItems.length,
+    galleryItems: galleryItems.map((item) => ({ id: item.id, prompt: item.prompt, createdAt: item.created_at || item.createdAt })),
+    selectedLook: selectedLook ? { id: selectedLook.id, prompt: selectedLook.prompt } : null,
+    lastErrorMessage: errorMessage,
+  };
 
   // Load saved gallery looks on mount (survives refresh)
   useEffect(() => {
@@ -102,10 +123,15 @@ export default function App() {
   };
 
   // Main Generation Pipeline Handler
-  const handleGenerate = async () => {
+  const handleGenerate = async (customPrompt) => {
     if (!basePhoto) {
       baseInputRef.current?.click();
-      return;
+      return { success: false, reason: 'No base photo uploaded.' };
+    }
+
+    const effectivePrompt = typeof customPrompt === 'string' ? customPrompt : prompt;
+    if (typeof customPrompt === 'string') {
+      setPrompt(customPrompt);
     }
 
     setIsLoading(true);
@@ -120,7 +146,7 @@ export default function App() {
       const garmentPart = outfitPhoto ? await fileToPart(outfitPhoto) : null;
 
       // 2. Call editPhoto from api.js (proxied to /api/gemini)
-      const response = await editPhoto(photoPart, garmentPart, prompt);
+      const response = await editPhoto(photoPart, garmentPart, effectivePrompt);
 
       if (!response) {
         setResultText('Generation complete. No visual output was returned.');
@@ -148,9 +174,11 @@ export default function App() {
           setResultText(JSON.stringify(response, null, 2));
         }
       }
+      return { success: true };
     } catch (err) {
       console.error('Error during photo edit generation:', err);
       setErrorMessage(err?.message || 'Failed to generate style. Please try again.');
+      return { success: false, error: err?.message };
     } finally {
       setIsLoading(false);
     }
@@ -158,7 +186,7 @@ export default function App() {
 
   // Save generated look to Gallery (R2 for image + D1 for metadata)
   const handleSaveToGallery = async () => {
-    if (!resultImage || isSaving) return;
+    if (!resultImage || isSaving) return null;
 
     setIsSaving(true);
     try {
@@ -167,9 +195,11 @@ export default function App() {
         setGalleryItems((prev) => [savedItem, ...prev.filter((i) => i.id !== savedItem.id)]);
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
+        return savedItem;
       }
     } catch (err) {
       console.error('Failed to save look to gallery:', err);
+      return null;
     } finally {
       setIsSaving(false);
     }
@@ -216,6 +246,82 @@ export default function App() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    }
+  };
+
+  // Tool Execution Dispatcher for Gemini Assistant
+  const handleExecuteTool = async (toolName, params = {}) => {
+    switch (toolName) {
+      case 'generate_image_edit': {
+        if (!basePhoto) {
+          baseInputRef.current?.click();
+          return { success: false, message: 'Please upload a base photo first to generate your look.' };
+        }
+        if (params.prompt && typeof params.prompt === 'string') {
+          setPrompt(params.prompt);
+        }
+        setActiveTab('create');
+        setActiveNav('create');
+        const res = await handleGenerate(params.prompt);
+        return res?.success
+          ? { success: true, message: 'Look generated successfully.' }
+          : { success: false, message: res?.error || 'Generation failed.' };
+      }
+      case 'save_current_result': {
+        if (!resultImage) {
+          return { success: false, message: 'No generated image on canvas to save right now.' };
+        }
+        const saved = await handleSaveToGallery();
+        return saved
+          ? { success: true, message: 'Saved look to gallery.' }
+          : { success: false, message: 'Failed to save look.' };
+      }
+      case 'download_current_result': {
+        if (!resultImage && !resultText) {
+          return { success: false, message: 'No generated result available to download.' };
+        }
+        handleDownloadCurrent();
+        return { success: true, message: 'Download initiated.' };
+      }
+      case 'open_gallery': {
+        setActiveTab('gallery');
+        setActiveNav('looks');
+        return { success: true, message: 'Opened saved looks gallery.' };
+      }
+      case 'open_selected_look': {
+        const lookId = params.lookId;
+        const found = galleryItems.find((item) => String(item.id) === String(lookId));
+        if (found) {
+          setSelectedLook(found);
+          setActiveTab('gallery');
+          setActiveNav('looks');
+          return { success: true, message: `Opened look #${found.id} in lightbox.` };
+        } else if (galleryItems.length > 0) {
+          const fallback = galleryItems[0];
+          setSelectedLook(fallback);
+          setActiveTab('gallery');
+          setActiveNav('looks');
+          return { success: true, message: `Opened latest look #${fallback.id} in lightbox.` };
+        }
+        return { success: false, message: `Look #${lookId} not found in gallery.` };
+      }
+      case 'delete_gallery_item': {
+        const lookId = params.lookId || selectedLook?.id;
+        if (!lookId) {
+          return { success: false, message: 'No look specified to delete.' };
+        }
+        await handleDeleteLook(lookId);
+        return { success: true, message: `Deleted look #${lookId} from gallery.` };
+      }
+      case 'update_styling_prompt': {
+        if (params.text) {
+          setPrompt(params.text);
+          return { success: true, message: `Updated prompt to "${params.text}".` };
+        }
+        return { success: false, message: 'Missing prompt text.' };
+      }
+      default:
+        return { success: false, message: `Unsupported tool "${toolName}".` };
     }
   };
 
@@ -833,6 +939,29 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Persistent Gemini Assistant Floating Button */}
+      <button
+        type="button"
+        id="btn-gemini-assistant"
+        className="gemini-persistent-pill"
+        onClick={() => setIsAssistantOpen(true)}
+        aria-label="Open Gemini Assistant"
+      >
+        <span className="gemini-pill-sparkle">✦</span>
+        <span className="gemini-pill-text">Gemini — How can I help?</span>
+      </button>
+
+      {/* Persistent Gemini Assistant Panel / Sheet */}
+      <GeminiAssistantSheet
+        isOpen={isAssistantOpen}
+        onClose={() => setIsAssistantOpen(false)}
+        workspaceContext={workspaceContext}
+        onExecuteTool={handleExecuteTool}
+        onApplyPromptSuggestion={(newPrompt) => {
+          setPrompt(newPrompt);
+        }}
+      />
 
       {/* Menu / Studio Settings Sheet Modal */}
       {showMenuModal && (

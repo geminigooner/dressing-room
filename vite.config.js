@@ -38,7 +38,7 @@ function geminiDevApiPlugin() {
           req.on('end', async () => {
             try {
               const body = JSON.parse(bodyStr);
-              const { model, contents, generationConfig } = body;
+              const { model, contents, generationConfig, systemInstruction } = body;
               if (!model || !contents) {
                 res.statusCode = 400;
                 res.setHeader('Content-Type', 'application/json');
@@ -52,7 +52,7 @@ function geminiDevApiPlugin() {
                   'Content-Type': 'application/json',
                   'x-goog-api-key': apiKey,
                 },
-                body: JSON.stringify({ contents, generationConfig }),
+                body: JSON.stringify({ contents, generationConfig, systemInstruction }),
               });
 
               const data = await response.json();

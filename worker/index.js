@@ -25,7 +25,7 @@ export default {
         return json({ error: "Invalid JSON payload" }, 400);
       }
 
-      const { model, contents, generationConfig } = body;
+      const { model, contents, generationConfig, systemInstruction } = body;
       if (!model || !contents) {
         return json({ error: "Missing required model or contents parameter" }, 400);
       }
@@ -36,7 +36,7 @@ export default {
           "Content-Type": "application/json",
           "x-goog-api-key": env.GEMINI_API_KEY,
         },
-        body: JSON.stringify({ contents, generationConfig }),
+        body: JSON.stringify({ contents, generationConfig, systemInstruction }),
       });
 
       const data = await res.json();

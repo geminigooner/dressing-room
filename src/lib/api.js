@@ -122,7 +122,7 @@ ${userPrompt ? `"${userPrompt}"` : 'Style the person with a realistic, well-fitt
   });
 
   // Using standard multimodal Gemini model
-  const model = 'gemini-2.5-flash';
+  const model = 'gemini-3.7-flash';
 
   const payload = {
     model,
@@ -355,3 +355,139 @@ export async function deleteFromGallery(id) {
     console.warn('Remote delete failed:', err);
   }
 }
+
+// -------------------------------------------------------------
+// Persistent Gemini Assistant Shell API
+// -------------------------------------------------------------
+
+/**
+ * Sends conversation history, current workspace state snapshot, and active tool registry to Gemini.
+ * @param {Array<{role: string, content: string}>} messages - Conversation turns
+ * @param {object} workspaceContext - Live snapshot of app state
+ * @param {Array<object>} capabilities - Dynamic tool / capability registry
+ * @returns {Promise<{content: string, toolRequest: {tool: string, params: object}|null}>} - Assistant's reply with optional tool request
+ */
+export async function chatWithAssistant(messages, workspaceContext, capabilities) {
+  const model = 'gemini-3.7-flash';
+
+  const gallerySummary = Array.isArray(workspaceContext.galleryItems) && workspaceContext.galleryItems.length > 0
+    ? workspaceContext.galleryItems.slice(0, 8).map((item, idx) => `[#${item.id || idx + 1}: "${item.prompt || 'Untitled Look'}"]`).join(', ')
+    : 'No saved looks';
+
+  const systemInstruction = `You are Gemini, the built-in AI styling assistant inside "Dressing Room" (AI Style Studio).
+You are grounded, sharp, attentive, and helpful. You speak naturally, concisely, and directly.
+
+[CURRENT WORKSPACE STATE SNAPSHOT]:
+- Base Photo Loaded: ${workspaceContext.hasBasePhoto ? `YES (${workspaceContext.basePhotoName || 'uploaded photo'})` : 'NO (User has not uploaded a base photo yet)'}
+- Outfit Reference Loaded: ${workspaceContext.hasOutfitReference ? `YES (${workspaceContext.outfitPhotoName || 'reference image'})` : 'NO (No separate outfit photo loaded)'}
+- Current Styling Prompt: ${workspaceContext.prompt ? `"${workspaceContext.prompt}"` : '(empty prompt field)'}
+- Generation Status: ${workspaceContext.isGenerating ? 'Currently processing generation...' : 'Idle'}
+- Result Status: ${workspaceContext.hasResultImage ? 'Generated look image available on canvas' : workspaceContext.hasResultText ? 'Text styling response available' : 'No result generated yet'}
+- Active Tab/View: ${workspaceContext.activeTab || 'create'} (Gallery has ${workspaceContext.galleryCount || 0} saved looks)
+- Selected Lightbox Look: ${workspaceContext.selectedLook ? `Look #${workspaceContext.selectedLook.id} (Prompt: "${workspaceContext.selectedLook.prompt || ''}")` : 'None'}
+- Saved Looks in Gallery: ${gallerySummary}
+${workspaceContext.lastErrorMessage ? `- Last Error: "${workspaceContext.lastErrorMessage}"` : ''}
+
+[REGISTERED APP CAPABILITIES / TOOLS]:
+${JSON.stringify(capabilities, null, 2)}
+
+[TOOL EXECUTION GUIDELINES]:
+1. When the user EXPLICITLY requests an action that corresponds to one of the registered tools above (such as "generate this", "try this edit again", "save this one", "download this", "open my gallery", "show me this gallery item", "delete this gallery item", "change prompt to..."):
+   - You MUST request the app tool by including a structured code block in your response formatted as:
+   \`\`\`tool_request
+   {
+     "tool": "<tool_id>",
+     "params": { ... }
+   }
+   \`\`\`
+   - Accompany the tool block with a concise, helpful conversational response explaining what action you are taking.
+
+2. Situational Pronouns & Context:
+   - Use the workspace snapshot to resolve relative phrases like "this", "that one", "save it", "try again", which refer to the current result or current look selection.
+   - If a request is ambiguous or missing required inputs (e.g., trying to generate with no base photo, or deleting when no look is selected and none was specified), DO NOT request a tool. Ask the user for clarification.
+
+3. Strict Restraints:
+   - NEVER emit a tool request unless the user explicitly asked for that action.
+   - NEVER execute unsolicited generations, saves, deletes, or loops.
+   - Only use tools present in [REGISTERED APP CAPABILITIES / TOOLS]. Do not invent tools.`;
+
+  // Format messages into Gemini contents structure
+  const formattedContents = (messages || []).map((m) => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.content }],
+  }));
+
+  const payload = {
+    model,
+    contents: formattedContents,
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 600,
+    },
+    systemInstruction: {
+      parts: [{ text: systemInstruction }],
+    },
+  };
+
+  const response = await fetch('/api/gemini', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(`Failed to parse assistant response (status ${response.status})`);
+  }
+
+  if (!response.ok) {
+    const message = data?.error?.message || data?.error || `Assistant request failed with status ${response.status}`;
+    throw new Error(message);
+  }
+
+  if (!data?.candidates || data.candidates.length === 0) {
+    throw new Error('No response from Gemini assistant.');
+  }
+
+  const candidate = data.candidates[0];
+  const responseParts = candidate?.content?.parts || [];
+  const rawText = responseParts
+    .filter((p) => typeof p.text === 'string' && p.text.trim())
+    .map((p) => p.text.trim())
+    .join('\n\n');
+
+  // Parse out any tool_request block
+  let toolRequest = null;
+  let cleanContent = rawText;
+
+  // Regex matching ```tool_request ... ``` or ```json { "tool": ... } ```
+  const toolBlockRegex = /```(?:tool_request|json)?\s*(\{[\s\S]*?"tool"[\s\S]*?\})\s*```/i;
+  const match = rawText.match(toolBlockRegex);
+
+  if (match && match[1]) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (parsed && parsed.tool) {
+        toolRequest = {
+          tool: parsed.tool,
+          params: parsed.params || parsed.parameters || {},
+        };
+        // Remove the code block from the user-facing text display
+        cleanContent = rawText.replace(match[0], '').trim();
+      }
+    } catch (parseErr) {
+      console.warn('Failed to parse tool request JSON from model response:', parseErr);
+    }
+  }
+
+  return {
+    content: cleanContent || "I'm right here. How can I help you with your look?",
+    toolRequest,
+  };
+}
+
+

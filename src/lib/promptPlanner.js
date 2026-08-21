@@ -319,7 +319,7 @@ export function buildStructuredEditPlan({
   // Goal & Outfit clause
   if (hasOutfitReference) {
     instructionClauses.push(
-      `Dress the subject in Image 1 (Base Photo) in the exact clothing shown in Image 2 (Outfit Reference), matching its cut, fabric texture, and color palette accurately to their body shape.`
+      `Dress the subject in Image 1 (Base Photo) in the exact clothing shown in Image 2 (Outfit Reference), matching its cut, fabric texture, and color palette accurately to their body shape, following the user's request: ${originalRequest}.`
     );
   } else {
     instructionClauses.push(`Edit the clothing of the subject in Image 1: ${originalRequest}.`);

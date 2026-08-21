@@ -180,6 +180,7 @@ CRITICAL CONSTRAINT: Provide only factual descriptive information. Do NOT includ
  * @param {Array<object>} params.selectedIdentityRefs - Active identity reference objects
  * @param {Record<string, string>} params.segmentWeights - Role weights assigned to references (face/hair/body/auto)
  * @param {object} params.identityContract - Identity fidelity contract settings
+ * @param {string} params.identityLockMode - Identity lock aggressiveness ('soft' | 'balanced' | 'strict')
  * @param {Array<object>} params.successfulMemories - Relevant historical successful edit records
  * @param {Array<object>} params.failedMemories - Relevant historical failed edit records (negative feedback)
  * @param {object} params.searchGrounding - Optional search grounding result
@@ -192,38 +193,69 @@ export function buildStructuredEditPlan({
   selectedIdentityRefs = [],
   segmentWeights = {},
   identityContract = {},
+  identityLockMode = 'balanced',
   successfulMemories = [],
   failedMemories = [],
   searchGrounding = null,
 }) {
   const originalRequest = userPrompt.trim() || (hasOutfitReference ? 'Wear the outfit shown in the reference' : 'Style a realistic, modern outfit');
+  const lockMode = ['soft', 'balanced', 'strict'].includes((identityLockMode || '').toLowerCase().trim())
+    ? identityLockMode.toLowerCase().trim()
+    : 'balanced';
 
-  // 1. Identify Elements That Must Remain Unchanged
-  const elementsUnchanged = [
-    'Original pose, body posture, arm and hand positions',
-    'Camera framing, distance, perspective, and aspect ratio',
-    'Background environment, room architecture, walls, and ambient lighting',
-    'Exact facial bone structure, eyes, nose, lips, jawline, and natural expression',
-    'Natural body proportions, silhouette, curves, and height (no slimming or warping)',
-    identityContract.preserveHairUnlessRequested !== false
-      ? 'Original hairstyle, hair texture, hairline, and color (unless requested in prompt)'
-      : 'Natural hairstyle flow and hairline',
-    'Accessories, jewelry, phone, and unique markings not replaced by clothing',
-  ];
+  // 1. Identify Elements That Must Remain Unchanged based on Lock Mode
+  const elementsUnchanged = lockMode === 'strict'
+    ? [
+        'MANDATORY LOCK: Exact original pose, body posture, arm and hand positions, head angle',
+        'MANDATORY LOCK: Camera framing, shot distance, perspective, and aspect ratio',
+        'MANDATORY LOCK: Background environment, room architecture, walls, furniture, and ambient lighting',
+        'MANDATORY LOCK: Exact facial bone structure, eyes, nose, lips, jawline, and natural expression',
+        'MANDATORY LOCK: Exact natural body proportions, silhouette, curves, and height (absolute zero warping or slimming)',
+        'MANDATORY LOCK: Original hairstyle, hairline, texture, and color (unless explicitly requested in styling prompt)',
+        'MANDATORY LOCK: Accessories, jewelry, phone, hands, and unique markings not replaced by clothing',
+      ]
+    : lockMode === 'soft'
+    ? [
+        'Primary pose and body orientation from Image 1',
+        'General camera framing and scene perspective',
+        'Recognizable subject likeness and key facial landmarks',
+        'Styling flexibility allowed for hair, glam, and creative fashion adaptation',
+      ]
+    : [
+        'Original pose, body posture, arm and hand positions',
+        'Camera framing, distance, perspective, and aspect ratio',
+        'Background environment, room architecture, walls, and ambient lighting',
+        'Exact facial bone structure, eyes, nose, lips, jawline, and natural expression',
+        'Natural body proportions, silhouette, curves, and height (no slimming or warping)',
+        identityContract.preserveHairUnlessRequested !== false
+          ? 'Original hairstyle, hair texture, hairline, and color (unless requested in prompt)'
+          : 'Natural hairstyle flow and hairline',
+        'Accessories, jewelry, phone, and unique markings not replaced by clothing',
+      ];
 
-  // 2. Identity Preservation Requirements (from Contract & Segment Roles)
+  // 2. Identity Preservation Requirements (from Contract & Lock Mode)
   const identityRequirements = [];
-  if (identityContract.preserveFacialStructure !== false) {
-    identityRequirements.push('Preserve exact facial features, bone structure, and micro-expressions.');
-  }
-  if (identityContract.preserveComplexion !== false) {
-    identityRequirements.push('Preserve natural skin tone, undertones, and texture without airbrushing or skin lightening.');
-  }
-  if (identityContract.preserveRecognizableBodyProportions !== false) {
-    identityRequirements.push('Preserve true-to-life body silhouette and anatomical proportions.');
-  }
-  if (identityContract.doNotReinterpretIntoGenericBeautyIdeal !== false) {
-    identityRequirements.push('Do NOT alter identity into a generic AI beauty ideal or face-swap.');
+  if (lockMode === 'strict') {
+    identityRequirements.push('MANDATORY: Uncompromisingly preserve exact facial bone structure, eye shape, nose, and lips with zero face-swapping.');
+    identityRequirements.push('MANDATORY: Preserve natural skin tone, undertones, and texture without airbrushing or skin lightening.');
+    identityRequirements.push('MANDATORY: Preserve true-to-life body silhouette and anatomical proportions with maximum consistency.');
+    identityRequirements.push('MANDATORY: Absolute prohibition against generic AI beautification or facial alterations.');
+  } else if (lockMode === 'soft') {
+    identityRequirements.push('Preserve recognizable facial likeness while permitting creative makeup, hairstyle, and styling flexibility.');
+    identityRequirements.push('Preserve general body frame and posture to fit the requested fashion silhouette naturally.');
+  } else {
+    if (identityContract.preserveFacialStructure !== false) {
+      identityRequirements.push('Preserve exact facial features, bone structure, and micro-expressions.');
+    }
+    if (identityContract.preserveComplexion !== false) {
+      identityRequirements.push('Preserve natural skin tone, undertones, and texture without airbrushing or skin lightening.');
+    }
+    if (identityContract.preserveRecognizableBodyProportions !== false) {
+      identityRequirements.push('Preserve true-to-life body silhouette and anatomical proportions.');
+    }
+    if (identityContract.doNotReinterpretIntoGenericBeautyIdeal !== false) {
+      identityRequirements.push('Do NOT alter identity into a generic AI beauty ideal or face-swap.');
+    }
   }
 
   // 3. Segment Reference Guidance
@@ -267,16 +299,16 @@ export function buildStructuredEditPlan({
   }
 
   const correctiveClauses = [];
-  if (failureReasonCounts['body_proportions_changed'] >= 1) {
+  if (failureReasonCounts['body_proportions_changed'] >= 1 || lockMode === 'strict') {
     correctiveClauses.push('Strictly avoid warping or slimming the body silhouette.');
   }
-  if (failureReasonCounts['face_changed'] >= 1 || failureReasonCounts['too_generic'] >= 1) {
+  if (failureReasonCounts['face_changed'] >= 1 || failureReasonCounts['too_generic'] >= 1 || lockMode === 'strict') {
     correctiveClauses.push('Do not substitute a generic AI face or alter unique eye/nose shapes.');
   }
-  if (failureReasonCounts['background_changed'] >= 1 && correctiveClauses.length < 2) {
+  if (failureReasonCounts['background_changed'] >= 1 && correctiveClauses.length < (lockMode === 'strict' ? 3 : 2)) {
     correctiveClauses.push('Leave original background architecture unchanged.');
   }
-  if (failureReasonCounts['skin_tone_changed'] >= 1 && correctiveClauses.length < 2) {
+  if (failureReasonCounts['skin_tone_changed'] >= 1 && correctiveClauses.length < (lockMode === 'strict' ? 3 : 2)) {
     correctiveClauses.push('Preserve original natural complexion without skin lightening.');
   }
 
@@ -298,26 +330,64 @@ export function buildStructuredEditPlan({
     instructionClauses.push(`Styling nuance: incorporate ${searchGrounding.summary.slice(0, 150)}.`);
   }
 
-  // Identity preservation clause
-  if (identityRefSummaries.length > 0) {
-    const rolesSummary = identityRefSummaries
-      .map((r) => `${r.role === 'auto' ? 'overall look' : r.role} from "${r.label}"`)
-      .join(', ');
-    instructionClauses.push(
-      `Strictly preserve the subject's exact identity and facial features from Image 1, cross-referencing attached identity photos (${rolesSummary}).`
-    );
+  // Identity preservation clause tailored to lockMode
+  if (lockMode === 'strict') {
+    if (identityRefSummaries.length > 0) {
+      const rolesSummary = identityRefSummaries
+        .map((r) => `${r.role === 'auto' ? 'overall look' : r.role} from "${r.label}"`)
+        .join(', ');
+      instructionClauses.push(
+        `MANDATORY STRICT IDENTITY LOCK: Uncompromisingly lock and preserve the exact facial bone structure, eyes, nose, lips, jawline, skin undertones, and unique features of the person in Image 1, cross-referencing attached identity photos (${rolesSummary}) with zero alteration.`
+      );
+    } else {
+      instructionClauses.push(
+        `MANDATORY STRICT IDENTITY LOCK: Uncompromisingly lock and preserve the exact facial bone structure, eye shape, nose, lips, skin tone, and unique identity of the person in Image 1 with zero face alteration.`
+      );
+    }
+  } else if (lockMode === 'soft') {
+    if (identityRefSummaries.length > 0) {
+      instructionClauses.push(
+        `Preserve the general recognizable likeness and face of the subject in Image 1, while allowing flexible styling, makeup, and hair adaptation as requested.`
+      );
+    } else {
+      instructionClauses.push(
+        `Preserve the recognizable identity of the person in Image 1 while allowing natural styling and glam flexibility.`
+      );
+    }
   } else {
-    instructionClauses.push(`Strictly preserve the exact identity, facial features, and skin tone of the person in Image 1.`);
+    // Balanced
+    if (identityRefSummaries.length > 0) {
+      const rolesSummary = identityRefSummaries
+        .map((r) => `${r.role === 'auto' ? 'overall look' : r.role} from "${r.label}"`)
+        .join(', ');
+      instructionClauses.push(
+        `Strictly preserve the subject's exact identity and facial features from Image 1, cross-referencing attached identity photos (${rolesSummary}).`
+      );
+    } else {
+      instructionClauses.push(`Strictly preserve the exact identity, facial features, and skin tone of the person in Image 1.`);
+    }
   }
 
   // Base Photo Authority & Invariance clause (Concise)
-  instructionClauses.push(
-    `Maintain the exact original pose, natural body proportions, background environment, lighting, and camera framing with zero drift.`
-  );
+  if (lockMode === 'strict') {
+    instructionClauses.push(
+      `MANDATORY FIDELITY LOCK: Strictly anchor the exact original body proportions, natural silhouette, posture, hand placement, background architecture, and ambient lighting with zero warping or background drift.`
+    );
+  } else if (lockMode === 'soft') {
+    instructionClauses.push(
+      `Maintain the primary pose and setting from Image 1, allowing harmonious visual integration with the new style.`
+    );
+  } else {
+    // Balanced
+    instructionClauses.push(
+      `Maintain the exact original pose, natural body proportions, background environment, lighting, and camera framing with zero drift.`
+    );
+  }
 
-  // Corrective Guidance (only if past user rejections indicated recurring failure patterns, max 1 concise sentence)
+  // Corrective Guidance (only if past user rejections indicated recurring failure patterns or strict mode is active)
   if (correctiveClauses.length > 0) {
-    instructionClauses.push(correctiveClauses.slice(0, 2).join(' '));
+    const maxClauses = lockMode === 'strict' ? 3 : 2;
+    instructionClauses.push(correctiveClauses.slice(0, maxClauses).join(' '));
   }
 
   const finalConciseInstruction = instructionClauses.join(' ');
@@ -326,6 +396,7 @@ export function buildStructuredEditPlan({
     planId: `plan_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     createdAt: Date.now(),
     originalUserRequest: originalRequest,
+    identityLockMode: lockMode,
     basePhotoAuthority: {
       context: basePhotoContext,
       authoritativeFor: ['pose', 'camera framing', 'background environment', 'lighting', 'body placement'],
@@ -369,6 +440,7 @@ export async function planEditPrompt({
   selectedIdentityRefs = [],
   segmentWeights = {},
   identityContract = {},
+  identityLockMode = 'balanced',
   successfulMemories = [],
   failedMemories = [],
   allowSearch = true,
@@ -389,6 +461,7 @@ export async function planEditPrompt({
     selectedIdentityRefs,
     segmentWeights,
     identityContract,
+    identityLockMode,
     successfulMemories,
     failedMemories,
     searchGrounding: searchResult,

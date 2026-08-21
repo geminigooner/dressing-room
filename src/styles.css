@@ -2364,6 +2364,46 @@ html, body {
   border-color: #B8E8CD;
 }
 
+.create-identity-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.identity-lock-mode-strip {
+  display: inline-flex;
+  align-items: center;
+  background: #FFFFFF;
+  border: 1px solid #FFE0EA;
+  border-radius: 9999px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.identity-lock-pill {
+  border: none;
+  background: transparent;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+
+.identity-lock-pill:hover {
+  color: var(--accent-pink-dark);
+  background: rgba(230, 52, 106, 0.06);
+}
+
+.identity-lock-pill.active {
+  background: var(--accent-pink);
+  color: #FFFFFF;
+  box-shadow: 0 1px 4px rgba(230, 52, 106, 0.25);
+}
+
 .create-identity-manage-btn {
   display: flex;
   align-items: center;

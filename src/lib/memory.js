@@ -222,6 +222,7 @@ export async function recordSuccessfulEdit({
   prompt = '',
   finalInstruction = '',
   basePhotoContext = '',
+  identityLockMode = 'balanced',
   identityRefIds = [],
   segmentWeights = {},
   approvedSegments = [],
@@ -239,6 +240,7 @@ export async function recordSuccessfulEdit({
     keywords: extractEditKeywords(prompt),
     finalInstruction: (finalInstruction || '').trim(),
     basePhotoContext: basePhotoContext || 'Uploaded photo',
+    identityLockMode: identityLockMode || 'balanced',
     identityRefIds: Array.isArray(identityRefIds) ? identityRefIds : [],
     segmentWeights: segmentWeights || {},
     approvedSegments: Array.isArray(approvedSegments) ? approvedSegments : [],
@@ -510,6 +512,7 @@ export async function recordFailedEdit({
   generationId,
   prompt = '',
   basePhotoContext = '',
+  identityLockMode = 'balanced',
   identityRefIds = [],
   segmentWeights = {},
   failureReasons = [],
@@ -527,6 +530,7 @@ export async function recordFailedEdit({
     prompt: (prompt || '').trim(),
     keywords: extractEditKeywords(prompt),
     basePhotoContext: basePhotoContext || 'Uploaded photo',
+    identityLockMode: identityLockMode || 'balanced',
     identityRefIds: Array.isArray(identityRefIds) ? identityRefIds : [],
     segmentWeights: segmentWeights || {},
     failureReasons: Array.isArray(failureReasons) ? failureReasons : [],
@@ -729,6 +733,7 @@ export function scoreFailurePenalty(item, prompt = '', activeSegment = 'auto') {
  * - Current visual relevance is ALWAYS primary.
  * - Success bonus (+3 to +12)
  * - Failure penalty (-1 to -6)
+ * - Strict mode amplifies positive memory synergy (+2 to +4) to strongly favor proven successful combos.
  * - Never permanently blacklists any reference.
  * - Never overrides explicit user manual choices.
  * 
@@ -736,43 +741,47 @@ export function scoreFailurePenalty(item, prompt = '', activeSegment = 'auto') {
  * @param {string} prompt - Current edit prompt
  * @param {Array<string>} currentSelectedIds - Currently selected identity reference IDs
  * @param {string} activeSegment - Active anatomical segment focus
- * @returns {number} Score adjustment (-6 to +12)
+ * @param {string} identityLockMode - 'soft' | 'balanced' | 'strict'
+ * @returns {number} Score adjustment (-6 to +15)
  */
-export function scoreMemorySynergy(item, prompt = '', currentSelectedIds = [], activeSegment = 'auto') {
+export function scoreMemorySynergy(item, prompt = '', currentSelectedIds = [], activeSegment = 'auto', identityLockMode = 'balanced') {
   if (!item || !item.id) return 0;
 
   let bonus = 0;
   const successStats = getAllReferenceSuccessStats();
   const refStat = successStats[item.id];
+  const isStrict = identityLockMode === 'strict';
+  const isSoft = identityLockMode === 'soft';
 
   if (refStat && refStat.approvedCount > 0) {
-    // 1. Gentle baseline boost for proven fidelity in user-approved edits (capped at +5)
-    bonus += Math.min(5, refStat.approvedCount * 1.5);
+    // 1. Gentle baseline boost for proven fidelity in user-approved edits
+    const baseMult = isStrict ? 2.5 : isSoft ? 1.0 : 1.5;
+    bonus += Math.min(isStrict ? 8 : 5, refStat.approvedCount * baseMult);
 
-    // 2. Keyword synergy with prior successful edits (+2 to +4)
+    // 2. Keyword synergy with prior successful edits
     const currentKeywords = extractEditKeywords(prompt);
     if (currentKeywords.length > 0 && Array.isArray(refStat.approvedKeywords)) {
       const sharedKw = currentKeywords.filter((kw) => refStat.approvedKeywords.includes(kw));
       if (sharedKw.length > 0) {
-        bonus += Math.min(4, sharedKw.length * 2);
+        bonus += Math.min(isStrict ? 6 : 4, sharedKw.length * 2);
       }
     }
 
-    // 3. Segment endorsement synergy (+3)
+    // 3. Segment endorsement synergy
     if (activeSegment && activeSegment !== 'auto' && refStat.approvedSegments) {
       const segCount = refStat.approvedSegments[activeSegment] || 0;
       if (segCount > 0) {
-        bonus += Math.min(4, segCount * 2);
+        bonus += Math.min(isStrict ? 5 : 4, segCount * 2);
       }
     }
 
-    // 4. Co-occurrence synergy with already-selected references (+3)
+    // 4. Co-occurrence synergy with already-selected references
     if (Array.isArray(currentSelectedIds) && currentSelectedIds.length > 0 && refStat.coOccurredWith) {
       const hasCoOccurred = currentSelectedIds.some((otherId) => {
         return otherId !== item.id && (refStat.coOccurredWith[otherId] || 0) > 0;
       });
       if (hasCoOccurred) {
-        bonus += 3;
+        bonus += isStrict ? 4 : 3;
       }
     }
   }
@@ -781,7 +790,8 @@ export function scoreMemorySynergy(item, prompt = '', currentSelectedIds = [], a
   const penalty = scoreFailurePenalty(item, prompt, activeSegment);
 
   const netAdjustment = bonus - penalty;
-  return Math.max(-6, Math.min(12, Math.round(netAdjustment)));
+  const maxScore = isStrict ? 15 : 12;
+  return Math.max(-6, Math.min(maxScore, Math.round(netAdjustment)));
 }
 
 /**

@@ -40,6 +40,8 @@ import {
   getSegmentWeights,
   saveSegmentWeights,
   DEFAULT_IDENTITY_CONTRACT,
+  getIdentityLockMode,
+  saveIdentityLockMode,
 } from './lib/identity.js';
 import {
   getSuccessfulEditsMemory,
@@ -79,6 +81,7 @@ export default function App() {
   const [selectedIdentityIds, setSelectedIdentityIds] = useState([]);
   const [segmentWeights, setSegmentWeights] = useState({}); // { [refId]: 'auto' | 'face' | 'hair' | 'body' }
   const [identityContract] = useState(DEFAULT_IDENTITY_CONTRACT);
+  const [identityLockMode, setIdentityLockMode] = useState(getIdentityLockMode);
 
   // Successful Edit Memory State
   const [successfulEdits, setSuccessfulEdits] = useState([]);
@@ -133,6 +136,7 @@ export default function App() {
       })),
     segmentWeights,
     identityContract,
+    identityLockMode,
     successMemoryCount: successfulEdits.length,
     failedMemoryCount: failedEdits.length,
     isCurrentResultApproved: isCurrentApproved,
@@ -265,6 +269,11 @@ export default function App() {
     });
   };
 
+  const handleChangeIdentityLockMode = (mode) => {
+    const valid = saveIdentityLockMode(mode);
+    setIdentityLockMode(valid);
+  };
+
   // Handle Base Photo Upload
   const handleBasePhotoChange = (e) => {
     const file = e.target.files?.[0];
@@ -354,6 +363,7 @@ export default function App() {
         selectedIdentityRefs: activeIdentityRefs,
         segmentWeights,
         identityContract,
+        identityLockMode,
         successfulMemories: successfulEdits,
         failedMemories: failedEdits,
         allowSearch: true,
@@ -368,6 +378,7 @@ export default function App() {
         plan,
         usedSearch,
         searchDetails,
+        identityLockMode,
         basePhotoContext: basePhoto?.name || (basePhotoPreview ? 'Uploaded photo' : 'Base photo'),
         identityRefIds: activeIdentityRefs.map((r) => r.id),
         segmentWeights: { ...segmentWeights },
@@ -990,6 +1001,8 @@ export default function App() {
               selectedIdentityIds={selectedIdentityIds}
               segmentWeights={segmentWeights}
               prompt={prompt}
+              identityLockMode={identityLockMode}
+              onChangeIdentityLockMode={handleChangeIdentityLockMode}
               onToggleSelect={handleToggleSelectIdentity}
               onSetSegmentWeight={handleSetSegmentWeight}
               onOpenIdentityTab={() => {

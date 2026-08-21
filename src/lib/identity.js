@@ -44,18 +44,47 @@ export const IDENTITY_SEGMENT_ROLES = [
 ];
 
 /**
- * Helper to compute relevance recommendation score based on tags, notes, and prompt keywords.
+ * Identity Lock Modes: Controls aggressiveness of identity & source-photo preservation
+ */
+export const IDENTITY_LOCK_MODES = [
+  {
+    id: 'soft',
+    label: 'Soft',
+    tagline: 'Styling Freedom',
+    description: 'Lighter preservation instructions. Allows larger styling, hair/glam changes, and creative reinterpretation.',
+  },
+  {
+    id: 'balanced',
+    label: 'Balanced',
+    tagline: 'Standard',
+    description: 'Normal identity preservation. Preserves recognizable face, body proportions, pose, framing, and setting while styling.',
+  },
+  {
+    id: 'strict',
+    label: 'Strict',
+    tagline: 'Max Fidelity',
+    description: 'Maximum lock. Uncompromisingly anchors facial bone structure, body proportions, posture, environment, and lighting.',
+  },
+];
+
+export const DEFAULT_IDENTITY_LOCK_MODE = 'balanced';
+export const IDENTITY_LOCK_STORAGE_KEY = 'dressing_room_identity_lock_mode_v1';
+
+/**
+ * Helper to compute relevance recommendation score based on tags, notes, prompt keywords, and identity lock mode.
  * Keeps manual user selection as authoritative while providing helpful visual cues.
  */
-export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto', selectedIds = []) {
+export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto', selectedIds = [], identityLockMode = 'balanced') {
   if (!item) return 0;
   let score = 0;
   const tags = Array.isArray(item.tags) ? item.tags : [];
   const textCorpus = `${item.label || ''} ${tags.join(' ')} ${item.notes || ''}`.toLowerCase();
   const lowerPrompt = (prompt || '').toLowerCase();
 
-  // Favorite boost
-  if (item.favorite) score += 15;
+  // Favorite boost (amplified in strict mode to prioritize trusted references)
+  if (item.favorite) {
+    score += identityLockMode === 'strict' ? 22 : identityLockMode === 'soft' ? 10 : 15;
+  }
 
   // Segment-specific relevance (Primary visual relevance)
   if (activeSegment === 'face') {
@@ -296,6 +325,39 @@ export function saveSegmentWeights(weights) {
     localStorage.setItem(SEGMENT_WEIGHTS_KEY, JSON.stringify(weights || {}));
   } catch (e) {
     console.warn('Failed to save segment weights:', e);
+  }
+}
+
+/**
+ * Retrieves the stored Identity Lock mode preference ('soft' | 'balanced' | 'strict')
+ * Defaults to 'balanced'.
+ * @returns {string}
+ */
+export function getIdentityLockMode() {
+  try {
+    const raw = localStorage.getItem(IDENTITY_LOCK_STORAGE_KEY);
+    if (raw && ['soft', 'balanced', 'strict'].includes(raw.toLowerCase().trim())) {
+      return raw.toLowerCase().trim();
+    }
+  } catch (e) {
+    console.warn('Failed to read identity lock mode:', e);
+  }
+  return DEFAULT_IDENTITY_LOCK_MODE;
+}
+
+/**
+ * Saves Identity Lock mode preference to storage
+ * @param {string} mode - 'soft' | 'balanced' | 'strict'
+ */
+export function saveIdentityLockMode(mode) {
+  try {
+    const normalized = (mode || '').toLowerCase().trim();
+    const valid = ['soft', 'balanced', 'strict'].includes(normalized) ? normalized : DEFAULT_IDENTITY_LOCK_MODE;
+    localStorage.setItem(IDENTITY_LOCK_STORAGE_KEY, valid);
+    return valid;
+  } catch (e) {
+    console.warn('Failed to save identity lock mode:', e);
+    return DEFAULT_IDENTITY_LOCK_MODE;
   }
 }
 

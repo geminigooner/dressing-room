@@ -15,7 +15,7 @@ import {
   ArrowRight,
   Flame
 } from 'lucide-react';
-import { IDENTITY_SEGMENT_ROLES, scoreReferenceRelevance } from '../lib/identity.js';
+import { IDENTITY_SEGMENT_ROLES, IDENTITY_LOCK_MODES, scoreReferenceRelevance } from '../lib/identity.js';
 import { getAllReferenceSuccessStats } from '../lib/memory.js';
 
 export default function IdentityReferenceSelector({
@@ -23,6 +23,8 @@ export default function IdentityReferenceSelector({
   selectedIdentityIds = [],
   segmentWeights = {}, // { [refId]: 'auto' | 'face' | 'hair' | 'body' }
   prompt = '',
+  identityLockMode = 'balanced',
+  onChangeIdentityLockMode,
   onToggleSelect,
   onSetSegmentWeight,
   onSelectRecommendedForSegment,
@@ -60,7 +62,7 @@ export default function IdentityReferenceSelector({
   // Sort references in quick picker with relevance cues & secondary memory synergy
   const scoredReferences = [...identityReferences].map((item) => ({
     ...item,
-    relevanceScore: scoreReferenceRelevance(item, prompt, activeFilterSegment, selectedIdentityIds),
+    relevanceScore: scoreReferenceRelevance(item, prompt, activeFilterSegment, selectedIdentityIds, identityLockMode),
   })).sort((a, b) => {
     // Selected first, then highest score
     const aSel = selectedIdentityIds.includes(a.id);
@@ -97,15 +99,35 @@ export default function IdentityReferenceSelector({
           )}
         </div>
 
-        <button
-          type="button"
-          className="create-identity-manage-btn"
-          onClick={onOpenIdentityTab}
-          aria-label="Manage Identity Bank"
-        >
-          <span>Identity Bank</span>
-          <ChevronRight size={14} />
-        </button>
+        <div className="create-identity-actions">
+          {/* Identity Lock Mode Toggle Strip */}
+          <div className="identity-lock-mode-strip" title="Identity Lock Mode: Controls fidelity of face & proportions">
+            {IDENTITY_LOCK_MODES.map((mode) => {
+              const isActive = identityLockMode === mode.id;
+              return (
+                <button
+                  key={mode.id}
+                  type="button"
+                  className={`identity-lock-pill ${isActive ? 'active' : ''}`}
+                  onClick={() => onChangeIdentityLockMode?.(mode.id)}
+                  title={`${mode.label}: ${mode.description}`}
+                >
+                  <span>{mode.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            className="create-identity-manage-btn"
+            onClick={onOpenIdentityTab}
+            aria-label="Manage Identity Bank"
+          >
+            <span>Identity Bank</span>
+            <ChevronRight size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Selected Items Horizontal Row or Empty Hint */}

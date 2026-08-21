@@ -25,6 +25,11 @@ import {
 } from 'lucide-react';
 import { editPhoto, fileToPart, imageSourceToPart, fetchGallery, saveToGallery, deleteFromGallery } from './lib/api.js';
 import {
+  planEditPrompt,
+  executeSearchGrounding,
+  evaluateSearchGroundingNeed,
+} from './lib/promptPlanner.js';
+import {
   getIdentityReferences,
   saveIdentityReference,
   deleteIdentityReference,
@@ -130,6 +135,9 @@ export default function App() {
           imageUrl: selectedLook.imageUrl || selectedLook.dataUrl,
         }
       : null,
+    lastGenerationPlan: currentGenerationData?.plan || null,
+    usedSearchGrounding: Boolean(currentGenerationData?.usedSearch || currentGenerationData?.plan?.searchGrounding?.used),
+    searchDetails: currentGenerationData?.searchDetails || currentGenerationData?.plan?.searchGrounding || null,
     lastErrorMessage: errorMessage,
   };
 
@@ -312,11 +320,27 @@ export default function App() {
         }
       }
 
+      // 3. Synthesize Prompt Intelligence structured plan before dispatching edit
+      const { plan, finalInstruction, usedSearch, searchDetails } = await planEditPrompt({
+        userPrompt: effectivePrompt,
+        basePhotoContext: basePhoto?.name || (basePhotoPreview ? 'Uploaded photo' : 'Base photo'),
+        hasOutfitReference: Boolean(outfitPhoto),
+        selectedIdentityRefs: activeIdentityRefs,
+        segmentWeights,
+        identityContract,
+        successfulMemories: successfulEdits,
+        allowSearch: true,
+      });
+
       // Generate a tracking ID for this run
       const genId = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const genMeta = {
         generationId: genId,
         prompt: effectivePrompt,
+        finalInstruction,
+        plan,
+        usedSearch,
+        searchDetails,
         basePhotoContext: basePhoto?.name || (basePhotoPreview ? 'Uploaded photo' : 'Base photo'),
         identityRefIds: activeIdentityRefs.map((r) => r.id),
         segmentWeights: { ...segmentWeights },
@@ -326,8 +350,8 @@ export default function App() {
       };
       setCurrentGenerationData(genMeta);
 
-      // 3. Call editPhoto from api.js (proxied to /api/gemini) with identity references
-      const response = await editPhoto(photoPart, garmentPart, effectivePrompt, identityParts);
+      // 4. Call editPhoto with the refined instruction and identity references
+      const response = await editPhoto(photoPart, garmentPart, finalInstruction, identityParts);
 
       if (!response) {
         setResultText('Generation complete. No visual output was returned.');
@@ -587,6 +611,42 @@ export default function App() {
           return { success: true, message: `Updated prompt to "${params.text}".` };
         }
         return { success: false, message: 'Missing prompt text.' };
+      }
+      case 'optimize_edit_prompt': {
+        const targetPrompt = params.prompt || prompt || '';
+        const activeIdentityRefs = identityReferences.filter((r) =>
+          selectedIdentityIds.includes(r.id)
+        );
+        const { plan, finalInstruction, usedSearch, searchDetails } = await planEditPrompt({
+          userPrompt: targetPrompt,
+          basePhotoContext: basePhoto?.name || (basePhotoPreview ? 'Uploaded photo' : 'Base photo'),
+          hasOutfitReference: Boolean(outfitPhoto),
+          selectedIdentityRefs: activeIdentityRefs,
+          segmentWeights,
+          identityContract,
+          successfulMemories: successfulEdits,
+          allowSearch: false,
+        });
+
+        return {
+          success: true,
+          message: `Synthesized Prompt Intelligence plan: "${finalInstruction}"`,
+          plan,
+        };
+      }
+      case 'research_prompt_strategy': {
+        const topic = params.topic || prompt || '';
+        if (!topic) {
+          return { success: false, message: 'No topic provided for research.' };
+        }
+        const searchResult = await executeSearchGrounding(topic, 'Assistant prompt research request');
+        return {
+          success: true,
+          message: searchResult.used
+            ? `Grounding research for "${topic}": ${searchResult.summary}`
+            : `Search completed. No additional external styling data found.`,
+          searchDetails: searchResult,
+        };
       }
       case 'open_identity_bank': {
         setActiveTab('identity');

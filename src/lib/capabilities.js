@@ -83,6 +83,32 @@ export const CAPABILITY_REGISTRY = [
     },
   },
   {
+    id: 'optimize_edit_prompt',
+    name: 'Optimize Edit Prompt',
+    description: 'Runs Prompt Intelligence to synthesize a structured, refined edit plan combining the user request, base photo authority, outfit reference, identity contract, and memory insights without immediate generation.',
+    status: 'available',
+    parameters: {
+      prompt: {
+        type: 'string',
+        required: true,
+        description: 'The styling prompt to refine with identity and base preservation constraints.',
+      },
+    },
+  },
+  {
+    id: 'research_prompt_strategy',
+    name: 'Research Prompt Strategy',
+    description: 'Optionally queries official Google guidance or contemporary fashion collection details via Google Search grounding to discover accurate styling keywords or prompting nuances.',
+    status: 'available',
+    parameters: {
+      topic: {
+        type: 'string',
+        required: true,
+        description: 'The specific contemporary fashion collection, trend, or official model guidance topic to research.',
+      },
+    },
+  },
+  {
     id: 'open_identity_bank',
     name: 'Open Identity Reference Bank',
     description: 'Switches view to the Identity Reference Bank where user identity photos, tags, and identity fidelity contract are managed.',
@@ -185,6 +211,34 @@ export function validateToolRequest(toolName, params = {}, workspaceContext = {}
       };
     }
     sanitizedParams.text = sanitizedParams.text.trim();
+  }
+
+  if (tool.id === 'optimize_edit_prompt') {
+    if (!sanitizedParams.prompt || typeof sanitizedParams.prompt !== 'string') {
+      if (workspaceContext.prompt) {
+        sanitizedParams.prompt = workspaceContext.prompt;
+      } else {
+        return {
+          isValid: false,
+          error: 'Cannot optimize prompt: No prompt was provided or currently typed in workspace.',
+        };
+      }
+    }
+    sanitizedParams.prompt = sanitizedParams.prompt.trim();
+  }
+
+  if (tool.id === 'research_prompt_strategy') {
+    if (!sanitizedParams.topic || typeof sanitizedParams.topic !== 'string') {
+      if (workspaceContext.prompt) {
+        sanitizedParams.topic = workspaceContext.prompt;
+      } else {
+        return {
+          isValid: false,
+          error: 'Cannot research prompt strategy: Please specify a topic or fashion query to research.',
+        };
+      }
+    }
+    sanitizedParams.topic = sanitizedParams.topic.trim();
   }
 
   return {

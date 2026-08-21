@@ -15,7 +15,7 @@ import {
   ArrowRight,
   Flame
 } from 'lucide-react';
-import { IDENTITY_SEGMENT_ROLES, IDENTITY_LOCK_MODES, scoreReferenceRelevance } from '../lib/identity.js';
+import { IDENTITY_SEGMENT_ROLES, IDENTITY_LOCK_MODES, IDENTITY_QUALITY_LABELS, scoreReferenceRelevance } from '../lib/identity.js';
 import { getAllReferenceSuccessStats } from '../lib/memory.js';
 
 export default function IdentityReferenceSelector({
@@ -75,9 +75,16 @@ export default function IdentityReferenceSelector({
   const filteredReferences = scoredReferences.filter((item) => {
     if (activeFilterSegment === 'all' || activeFilterSegment === 'auto') return true;
     const tags = item.tags || [];
-    if (activeFilterSegment === 'face') return tags.includes('face') || tags.includes('close-up') || tags.includes('neutral') || tags.includes('bright lighting');
-    if (activeFilterSegment === 'hair') return tags.includes('face') || tags.includes('close-up') || tags.includes('profile') || tags.includes('3/4 angle');
-    if (activeFilterSegment === 'body') return tags.includes('full body') || tags.includes('mirror selfie') || tags.includes('outdoor') || tags.includes('indoor');
+    const qLabels = item.qualityLabels || [];
+    if (activeFilterSegment === 'face') {
+      return qLabels.includes('face') || tags.includes('face') || tags.includes('close-up') || tags.includes('neutral') || tags.includes('bright lighting');
+    }
+    if (activeFilterSegment === 'hair') {
+      return qLabels.includes('angle') || tags.includes('face') || tags.includes('close-up') || tags.includes('profile') || tags.includes('3/4 angle');
+    }
+    if (activeFilterSegment === 'body') {
+      return qLabels.includes('body') || tags.includes('full body') || tags.includes('mirror selfie') || tags.includes('outdoor') || tags.includes('indoor');
+    }
     return true;
   });
 
@@ -331,6 +338,11 @@ export default function IdentityReferenceSelector({
                     <div className="quick-picker-tag-row">
                       {item.tags && item.tags.length > 0 && (
                         <span className="quick-picker-tag">#{item.tags[0]}</span>
+                      )}
+                      {item.qualityLabels && item.qualityLabels.length > 0 && (
+                        <span className="quick-picker-quality-pill" title={`Quality: ${item.qualityLabels.join(', ')}`}>
+                          {item.qualityLabels[0]}
+                        </span>
                       )}
                       {refStats[item.id]?.approvedCount > 0 && (
                         <span className="quick-picker-approved-pill" title={`Approved in ${refStats[item.id].approvedCount} edit(s)`}>

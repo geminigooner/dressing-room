@@ -21,6 +21,67 @@ export const DEFAULT_IDENTITY_TAGS = [
   'bright lighting',
 ];
 
+/**
+ * Lightweight Quality / Evidence Labels for Identity References.
+ * Signals what kind of evidence the reference photo is most useful for.
+ */
+export const IDENTITY_QUALITY_LABELS = [
+  { id: 'face', label: 'Face', description: 'Clear facial features, eyes, nose & smile' },
+  { id: 'body', label: 'Body', description: 'Full outfit, silhouette & body proportions' },
+  { id: 'angle', label: 'Angle', description: 'Profile, 3/4 turn, or dynamic pose angle' },
+  { id: 'lighting', label: 'Lighting', description: 'Clean or distinct lighting conditions' },
+  { id: 'overall identity', label: 'Overall Identity', description: 'General reliable likeness anchor' },
+];
+
+/**
+ * Automatically detects recommended quality labels from photo metadata, aspect ratio, tags, or image dimensions.
+ * @param {object} params
+ * @param {number} [params.width]
+ * @param {number} [params.height]
+ * @param {Array<string>} [params.tags]
+ * @param {string} [params.fileName]
+ * @returns {Array<string>} list of suggested quality label IDs
+ */
+export function detectPhotoQualityLabels({ width, height, tags = [], fileName = '' } = {}) {
+  const detected = new Set();
+  const lowerName = (fileName || '').toLowerCase();
+  const lowerTags = tags.map((t) => t.toLowerCase());
+
+  // Base likeness is always relevant
+  detected.add('overall identity');
+
+  const aspectRatio = width && height ? height / width : 1;
+
+  // Aspect ratio & tag heuristics
+  // Tall vertical photo (aspectRatio >= 1.45) strongly indicates full body / outfit
+  if (aspectRatio >= 1.45 || lowerTags.includes('full body') || lowerTags.includes('mirror selfie') || lowerName.includes('body') || lowerName.includes('outfit') || lowerName.includes('dress') || lowerName.includes('standing')) {
+    detected.add('body');
+  }
+
+  // Square or slightly portrait (aspectRatio between 0.85 and 1.35) or face tag indicates face / close-up
+  if (aspectRatio < 1.35 || lowerTags.includes('face') || lowerTags.includes('close-up') || lowerTags.includes('neutral') || lowerName.includes('face') || lowerName.includes('headshot') || lowerName.includes('portrait') || lowerName.includes('selfie')) {
+    detected.add('face');
+  }
+
+  // Angle detection
+  if (lowerTags.includes('3/4 angle') || lowerTags.includes('profile') || lowerName.includes('angle') || lowerName.includes('profile') || lowerName.includes('side') || lowerName.includes('turn')) {
+    detected.add('angle');
+  }
+
+  // Lighting detection
+  if (lowerTags.includes('bright lighting') || lowerTags.includes('indoor') || lowerTags.includes('outdoor') || lowerTags.includes('glam') || lowerName.includes('light') || lowerName.includes('flash') || lowerName.includes('sun') || lowerName.includes('studio') || lowerName.includes('night')) {
+    detected.add('lighting');
+  }
+
+  // Fallback defaults if set is empty
+  if (detected.size === 0) {
+    detected.add('face');
+    detected.add('overall identity');
+  }
+
+  return Array.from(detected);
+}
+
 export const DEFAULT_IDENTITY_CONTRACT = {
   preserveFacialStructure: true,
   preserveEyes: true,
@@ -113,6 +174,42 @@ export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto
     if (tags.includes('face') || textCorpus.includes('hair')) score += 15;
   }
 
+  // Lightweight Quality / Evidence Signals (additional recommendation nudge)
+  const qualityLabels = Array.isArray(item.qualityLabels) ? item.qualityLabels : [];
+  
+  // Overall Identity acts as a general-purpose helpful likeness signal
+  if (qualityLabels.includes('overall identity') || qualityLabels.includes('overall')) {
+    score += 4;
+  }
+
+  // Face quality: close-ups, headshots, face segment, beauty/makeup
+  if (qualityLabels.includes('face')) {
+    if (activeSegment === 'face' || lowerPrompt.includes('headshot') || lowerPrompt.includes('face') || lowerPrompt.includes('close-up') || lowerPrompt.includes('portrait') || lowerPrompt.includes('makeup') || lowerPrompt.includes('earring') || lowerPrompt.includes('glasses') || lowerPrompt.includes('smile') || lowerPrompt.includes('beauty')) {
+      score += 7;
+    }
+  }
+
+  // Body quality: full-body, outfit changes, garments, silhouette
+  if (qualityLabels.includes('body')) {
+    if (activeSegment === 'body' || lowerPrompt.includes('dress') || lowerPrompt.includes('gown') || lowerPrompt.includes('suit') || lowerPrompt.includes('pants') || lowerPrompt.includes('coat') || lowerPrompt.includes('shoes') || lowerPrompt.includes('outfit') || lowerPrompt.includes('full body') || lowerPrompt.includes('standing') || lowerPrompt.includes('skirt') || lowerPrompt.includes('jeans')) {
+      score += 7;
+    }
+  }
+
+  // Angle quality: profile, 3/4 turn, looking away, pose angles
+  if (qualityLabels.includes('angle')) {
+    if (lowerPrompt.includes('profile') || lowerPrompt.includes('3/4') || lowerPrompt.includes('angle') || lowerPrompt.includes('side view') || lowerPrompt.includes('turned') || lowerPrompt.includes('looking away') || lowerPrompt.includes('pose') || lowerPrompt.includes('over shoulder') || activeSegment === 'hair') {
+      score += 7;
+    }
+  }
+
+  // Lighting quality: tricky, atmospheric, or distinct lighting
+  if (qualityLabels.includes('lighting')) {
+    if (lowerPrompt.includes('light') || lowerPrompt.includes('shadow') || lowerPrompt.includes('golden hour') || lowerPrompt.includes('night') || lowerPrompt.includes('sun') || lowerPrompt.includes('bright') || lowerPrompt.includes('dark') || lowerPrompt.includes('studio') || lowerPrompt.includes('dramatic') || lowerPrompt.includes('neon') || lowerPrompt.includes('flash') || lowerPrompt.includes('moody')) {
+      score += 7;
+    }
+  }
+
   // Secondary Preference: User-Approved & Failed Edit Memory synergy (capped so visual relevance dominates)
   const memoryAdjustment = scoreMemorySynergy(item, prompt, selectedIds, activeSegment);
   score += memoryAdjustment;
@@ -202,6 +299,7 @@ export async function saveIdentityReference(item) {
     fileName: item.fileName || 'identity-photo.jpg',
     label: item.label || 'Identity Reference',
     tags: Array.isArray(item.tags) ? item.tags : ['face'],
+    qualityLabels: Array.isArray(item.qualityLabels) ? item.qualityLabels : (Array.isArray(item.quality) ? item.quality : []),
     notes: item.notes || '',
     createdAt: item.createdAt || Date.now(),
     favorite: Boolean(item.favorite),

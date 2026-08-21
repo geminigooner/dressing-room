@@ -19,7 +19,7 @@ import {
   Frown,
   AlertTriangle
 } from 'lucide-react';
-import { DEFAULT_IDENTITY_TAGS, saveIdentityReference } from '../lib/identity.js';
+import { DEFAULT_IDENTITY_TAGS, IDENTITY_QUALITY_LABELS, detectPhotoQualityLabels, saveIdentityReference } from '../lib/identity.js';
 import {
   getAllReferenceSuccessStats,
   getAllReferenceFailureStats,
@@ -45,6 +45,7 @@ export default function IdentityBank({
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showContractDetails, setShowContractDetails] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'favorites' | 'memory'
+  const [qualityFilter, setQualityFilter] = useState('all'); // 'all' | 'face' | 'body' | 'angle' | 'lighting'
   const [memorySubTab, setMemorySubTab] = useState('success'); // 'success' | 'failures'
   const [recipeSearch, setRecipeSearch] = useState('');
 
@@ -53,9 +54,11 @@ export default function IdentityBank({
   const [uploadPreview, setUploadPreview] = useState(null);
   const [label, setLabel] = useState('');
   const [selectedTags, setSelectedTags] = useState(['face', 'bright lighting']);
+  const [selectedQualityLabels, setSelectedQualityLabels] = useState(['face', 'overall identity']);
   const [notes, setNotes] = useState('');
   const [isFavorite, setIsFavorite] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingQualityRefId, setEditingQualityRefId] = useState(null);
 
   const refStats = getAllReferenceSuccessStats();
   const refFailureStats = getAllReferenceFailureStats();
@@ -68,7 +71,22 @@ export default function IdentityBank({
       setUploadFile(file);
       const reader = new FileReader();
       reader.onload = () => {
-        setUploadPreview(reader.result);
+        const dataUrl = reader.result;
+        setUploadPreview(dataUrl);
+
+        // Auto-detect image dimensions for smart quality signals
+        const img = new Image();
+        img.onload = () => {
+          const detected = detectPhotoQualityLabels({
+            width: img.width,
+            height: img.height,
+            tags: selectedTags,
+            fileName: file.name,
+          });
+          setSelectedQualityLabels(detected);
+        };
+        img.src = dataUrl;
+
         if (!label) {
           const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
           setLabel(cleanName.charAt(0).toUpperCase() + cleanName.slice(1));
@@ -86,6 +104,29 @@ export default function IdentityBank({
     }
   };
 
+  const toggleQualityLabel = (qualityId) => {
+    if (selectedQualityLabels.includes(qualityId)) {
+      setSelectedQualityLabels(selectedQualityLabels.filter((q) => q !== qualityId));
+    } else {
+      setSelectedQualityLabels([...selectedQualityLabels, qualityId]);
+    }
+  };
+
+  const handleToggleCardQuality = async (e, item, qualityId) => {
+    e.stopPropagation();
+    const current = Array.isArray(item.qualityLabels) ? item.qualityLabels : [];
+    const updated = current.includes(qualityId)
+      ? current.filter((q) => q !== qualityId)
+      : [...current, qualityId];
+    
+    const updatedItem = {
+      ...item,
+      qualityLabels: updated,
+    };
+    const saved = await saveIdentityReference(updatedItem);
+    onSaveReference?.(saved);
+  };
+
   const handleUploadSubmit = async (e) => {
     e.preventDefault();
     if (!uploadPreview) return;
@@ -98,6 +139,7 @@ export default function IdentityBank({
         fileName: uploadFile?.name || 'identity-reference.jpg',
         label: label.trim() || 'My Identity Photo',
         tags: selectedTags.length > 0 ? selectedTags : ['face'],
+        qualityLabels: selectedQualityLabels.length > 0 ? selectedQualityLabels : ['face'],
         notes: notes.trim(),
         favorite: isFavorite,
       };
@@ -110,6 +152,7 @@ export default function IdentityBank({
       setUploadPreview(null);
       setLabel('');
       setSelectedTags(['face', 'bright lighting']);
+      setSelectedQualityLabels(['face', 'overall identity']);
       setNotes('');
       setIsFavorite(false);
       setShowUploadModal(false);
@@ -123,7 +166,11 @@ export default function IdentityBank({
   const isSelected = (id) => selectedIdentityIds.includes(id);
 
   const filteredReferences = identityReferences.filter((item) => {
-    if (activeFilter === 'favorites') return item.favorite;
+    if (activeFilter === 'favorites' && !item.favorite) return false;
+    if (qualityFilter !== 'all') {
+      const qLabels = Array.isArray(item.qualityLabels) ? item.qualityLabels : [];
+      if (!qLabels.includes(qualityFilter)) return false;
+    }
     return true;
   });
 
@@ -659,6 +706,33 @@ export default function IdentityBank({
       ) : (
         /* STANDARD IDENTITY REFERENCES GRID */
         <>
+          {/* Quality Signal Filter Strip */}
+          {identityReferences.length > 0 && (
+            <div className="identity-quality-filter-bar">
+              <span className="identity-quality-filter-label">Filter Evidence:</span>
+              <div className="identity-quality-filter-pills">
+                <button
+                  type="button"
+                  className={`identity-qfilter-btn ${qualityFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setQualityFilter('all')}
+                >
+                  All Signals
+                </button>
+                {IDENTITY_QUALITY_LABELS.map((q) => (
+                  <button
+                    key={q.id}
+                    type="button"
+                    className={`identity-qfilter-btn ${qualityFilter === q.id ? 'active' : ''}`}
+                    onClick={() => setQualityFilter(qualityFilter === q.id ? 'all' : q.id)}
+                    title={q.description}
+                  >
+                    {q.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {filteredReferences.length === 0 ? (
             <div className="identity-empty-state">
               <div className="identity-empty-icon">
@@ -779,6 +853,26 @@ export default function IdentityBank({
                         </div>
                       )}
 
+                      {/* Quality / Evidence Signals */}
+                      <div className="identity-card-qualities">
+                        {IDENTITY_QUALITY_LABELS.map((q) => {
+                          const itemQualities = Array.isArray(item.qualityLabels) ? item.qualityLabels : [];
+                          const hasQuality = itemQualities.includes(q.id);
+                          return (
+                            <button
+                              key={q.id}
+                              type="button"
+                              className={`identity-quality-chip ${hasQuality ? 'active' : 'inactive'}`}
+                              onClick={(e) => handleToggleCardQuality(e, item, q.id)}
+                              title={`${q.label}: ${q.description} (Tap to toggle)`}
+                            >
+                              {hasQuality && <Check size={8} strokeWidth={3} />}
+                              <span>{q.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
                       {/* Notes snippet if present */}
                       {item.notes && (
                         <p className="identity-card-notes" title={item.notes}>
@@ -864,6 +958,31 @@ export default function IdentityBank({
                   placeholder="e.g. Main Headshot, Mirror Selfie, Golden Hour..."
                   maxLength={40}
                 />
+              </div>
+
+              {/* Quality & Evidence Signals Selector */}
+              <div className="identity-form-group">
+                <div className="identity-form-label-row">
+                  <label className="identity-form-label">Evidence & Quality Signals</label>
+                  <span className="identity-form-sub-hint">Signals for automatic selector</span>
+                </div>
+                <div className="identity-quality-selector-grid">
+                  {IDENTITY_QUALITY_LABELS.map((q) => {
+                    const active = selectedQualityLabels.includes(q.id);
+                    return (
+                      <button
+                        key={q.id}
+                        type="button"
+                        className={`identity-quality-pill ${active ? 'active' : ''}`}
+                        onClick={() => toggleQualityLabel(q.id)}
+                        title={q.description}
+                      >
+                        {active && <Check size={11} strokeWidth={2.5} />}
+                        <span>{q.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Tag Presets Selector */}

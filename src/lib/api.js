@@ -1,5 +1,5 @@
 // Client-side API orchestration layer
-// Handles file preparation and communication with the /api/gemini backend route
+// Handles file preparation, communication with /api/gemini backend route, and Gallery R2/D1 operations
 
 /**
  * Converts a browser File object to a Gemini inline data part
@@ -186,4 +186,172 @@ ${userPrompt ? `"${userPrompt}"` : 'Style the person with a realistic, well-fitt
   }
 
   return 'Look styling processed successfully.';
+}
+
+// -------------------------------------------------------------
+// IndexedDB Client Cache (guarantees survival across refreshes)
+// -------------------------------------------------------------
+const IDB_NAME = 'DressingRoomDB';
+const IDB_STORE = 'saved_looks';
+
+function openIndexedDB() {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || !window.indexedDB) {
+      resolve(null);
+      return;
+    }
+    const request = window.indexedDB.open(IDB_NAME, 1);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+}
+
+async function idbGetItems() {
+  const db = await openIndexedDB();
+  if (!db) return [];
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const list = req.result || [];
+        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        resolve(list);
+      };
+      req.onerror = () => resolve([]);
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
+async function idbSaveItem(item) {
+  const db = await openIndexedDB();
+  if (!db) return;
+  try {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    store.put(item);
+  } catch (e) {
+    console.warn('IDB put skipped:', e);
+  }
+}
+
+async function idbDeleteItem(id) {
+  const db = await openIndexedDB();
+  if (!db) return;
+  try {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    store.delete(id);
+  } catch (e) {
+    console.warn('IDB delete skipped:', e);
+  }
+}
+
+// -------------------------------------------------------------
+// Gallery Storage API (Cloudflare R2 + D1 backend)
+// -------------------------------------------------------------
+
+/**
+ * Fetches all saved looks from D1 metadata / R2
+ * @returns {Promise<Array<{id: string, r2Key: string, imageUrl: string, prompt: string, createdAt: number}>>}
+ */
+export async function fetchGallery() {
+  try {
+    const res = await fetch('/api/gallery', { method: 'GET' });
+    if (res.ok) {
+      const data = await res.json();
+      const serverItems = Array.isArray(data?.items) ? data.items : [];
+      if (serverItems.length > 0) {
+        // Sync to IDB cache
+        for (const it of serverItems) {
+          await idbSaveItem(it);
+        }
+        return serverItems;
+      }
+    }
+  } catch (err) {
+    console.warn('Backend fetch gallery failed, reading client cache:', err);
+  }
+
+  // Fallback to IndexedDB client storage
+  return await idbGetItems();
+}
+
+/**
+ * Saves a newly generated look:
+ * - Image binary is stored in R2
+ * - Metadata (id, r2Key, prompt, createdAt) is stored in D1
+ * @param {string} image - Base64 data URL or URL
+ * @param {string} prompt - Prompt used to generate the image
+ * @returns {Promise<object>}
+ */
+export async function saveToGallery(image, prompt) {
+  if (!image) {
+    throw new Error('No image to save to gallery');
+  }
+
+  const id = `look_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const createdAt = Date.now();
+  const localItem = {
+    id,
+    r2Key: `looks/${id}.png`,
+    imageUrl: image.startsWith('data:') ? image : `/api/gallery/image/${id}`,
+    prompt: prompt || '',
+    createdAt,
+    dataUrl: image,
+  };
+
+  // Always save immediately to client cache
+  await idbSaveItem(localItem);
+
+  try {
+    const res = await fetch('/api/gallery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image, prompt }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.item) {
+        const itemWithLocal = {
+          ...data.item,
+          dataUrl: image.startsWith('data:') ? image : data.item.imageUrl,
+        };
+        await idbSaveItem(itemWithLocal);
+        return itemWithLocal;
+      }
+    }
+  } catch (err) {
+    console.warn('Remote gallery save failed, saved locally in IndexedDB:', err);
+  }
+
+  return localItem;
+}
+
+/**
+ * Deletes an image from D1 metadata and R2 storage
+ * @param {string} id - Look ID
+ */
+export async function deleteFromGallery(id) {
+  if (!id) return;
+  // Remove from local cache
+  await idbDeleteItem(id);
+
+  try {
+    await fetch(`/api/gallery/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  } catch (err) {
+    console.warn('Remote delete failed:', err);
+  }
 }

@@ -15,27 +15,37 @@ import {
   Smile,
   Search,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Frown,
+  AlertTriangle
 } from 'lucide-react';
 import { DEFAULT_IDENTITY_TAGS, saveIdentityReference } from '../lib/identity.js';
-import { getAllReferenceSuccessStats, FINE_GRAINED_SEGMENTS } from '../lib/memory.js';
+import {
+  getAllReferenceSuccessStats,
+  getAllReferenceFailureStats,
+  FINE_GRAINED_SEGMENTS,
+  FAILURE_REASONS
+} from '../lib/memory.js';
 
 export default function IdentityBank({
   identityReferences = [],
   selectedIdentityIds = [],
   identityContract,
   successfulEdits = [],
+  failedEdits = [],
   onSaveReference,
   onDeleteReference,
   onToggleSelect,
   onToggleFavorite,
   onDeleteMemory,
+  onDeleteFailedMemory,
   onApplyMemoryRecipe,
   onGoToCreate,
 }) {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showContractDetails, setShowContractDetails] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'favorites' | 'memory'
+  const [memorySubTab, setMemorySubTab] = useState('success'); // 'success' | 'failures'
   const [recipeSearch, setRecipeSearch] = useState('');
 
   // Upload Form State
@@ -48,6 +58,7 @@ export default function IdentityBank({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const refStats = getAllReferenceSuccessStats();
+  const refFailureStats = getAllReferenceFailureStats();
 
   const fileInputRef = useRef(null);
 
@@ -138,6 +149,27 @@ export default function IdentityBank({
         segmentStats[seg] += 1;
       }
     });
+  });
+
+  // Calculate failure reasons breakdown across negative feedback memory
+  const failureStats = {};
+  FAILURE_REASONS.forEach((r) => { failureStats[r.id] = 0; });
+  failedEdits.forEach((fail) => {
+    (fail.failureReasons || []).forEach((rId) => {
+      if (failureStats[rId] !== undefined) {
+        failureStats[rId] += 1;
+      }
+    });
+  });
+
+  // Filter failures for memory tab
+  const filteredFailures = failedEdits.filter((fail) => {
+    if (!recipeSearch) return true;
+    const q = recipeSearch.toLowerCase();
+    const promptMatch = fail.prompt && fail.prompt.toLowerCase().includes(q);
+    const noteMatch = fail.userNote && fail.userNote.toLowerCase().includes(q);
+    const reasonMatch = fail.failureReasons && fail.failureReasons.some((r) => r.toLowerCase().includes(q));
+    return promptMatch || noteMatch || reasonMatch;
   });
 
   const refMap = new Map(identityReferences.map((r) => [r.id, r]));
@@ -270,10 +302,10 @@ export default function IdentityBank({
               type="button"
               className={`identity-filter-btn memory-filter-btn ${activeFilter === 'memory' ? 'active' : ''}`}
               onClick={() => setActiveFilter('memory')}
-              title="View approved combinations and recipes"
+              title="View approved combinations and learned feedback"
             >
               <Smile size={12} />
-              <span>Memory Bank ({successfulEdits.length})</span>
+              <span>Memory ({successfulEdits.length} / {failedEdits.length})</span>
             </button>
           </div>
 
@@ -293,177 +325,335 @@ export default function IdentityBank({
       {/* MEMORY BANK TAB VIEW */}
       {activeFilter === 'memory' ? (
         <div className="memory-inspection-container" id="memory-inspection-panel">
-          {/* Overview Stats Bar */}
-          <div className="memory-overview-bar">
-            <div className="memory-overview-item">
-              <span className="memory-overview-label">Total Approved</span>
-              <span className="memory-overview-val">{successfulEdits.length}</span>
-            </div>
-            <div className="memory-overview-divider" />
-            <div className="memory-overview-item">
-              <span className="memory-overview-label">Face Features</span>
-              <span className="memory-overview-val">{segmentStats.face}</span>
-            </div>
-            <div className="memory-overview-divider" />
-            <div className="memory-overview-item">
-              <span className="memory-overview-label">Hair & Hairstyle</span>
-              <span className="memory-overview-val">{segmentStats.hair}</span>
-            </div>
-            <div className="memory-overview-divider" />
-            <div className="memory-overview-item">
-              <span className="memory-overview-label">Body Silhouette</span>
-              <span className="memory-overview-val">{segmentStats.body}</span>
-            </div>
-            <div className="memory-overview-divider" />
-            <div className="memory-overview-item">
-              <span className="memory-overview-label">Skin & Complexion</span>
-              <span className="memory-overview-val">{segmentStats.complexion}</span>
-            </div>
+          {/* Sub-tab switcher: Approved vs Failures */}
+          <div className="memory-subtab-header">
+            <button
+              type="button"
+              className={`memory-subtab-btn ${memorySubTab === 'success' ? 'active' : ''}`}
+              onClick={() => setMemorySubTab('success')}
+            >
+              <Smile size={13} />
+              <span>Approved Recipes ({successfulEdits.length})</span>
+            </button>
+            <button
+              type="button"
+              className={`memory-subtab-btn failure-subtab ${memorySubTab === 'failures' ? 'active' : ''}`}
+              onClick={() => setMemorySubTab('failures')}
+            >
+              <Frown size={13} />
+              <span>Avoided Issues & Feedback ({failedEdits.length})</span>
+            </button>
           </div>
 
-          {/* Search bar for recipes */}
-          {successfulEdits.length > 2 && (
-            <div className="memory-search-row">
-              <Search size={14} style={{ color: 'var(--text-muted)' }} />
-              <input
-                type="text"
-                className="memory-search-input"
-                placeholder="Search approved recipes by prompt or keyword..."
-                value={recipeSearch}
-                onChange={(e) => setRecipeSearch(e.target.value)}
-              />
-              {recipeSearch && (
-                <button
-                  type="button"
-                  className="memory-search-clear"
-                  onClick={() => setRecipeSearch('')}
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Recipes List */}
-          {filteredRecipes.length === 0 ? (
-            <div className="identity-empty-state" style={{ padding: '36px 20px' }}>
-              <div className="identity-empty-icon">
-                <Smile size={28} style={{ color: 'var(--accent-pink-dark)' }} />
+          {memorySubTab === 'success' ? (
+            <>
+              {/* Overview Stats Bar */}
+              <div className="memory-overview-bar">
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Total Approved</span>
+                  <span className="memory-overview-val">{successfulEdits.length}</span>
+                </div>
+                <div className="memory-overview-divider" />
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Face Features</span>
+                  <span className="memory-overview-val">{segmentStats.face}</span>
+                </div>
+                <div className="memory-overview-divider" />
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Hair & Hairstyle</span>
+                  <span className="memory-overview-val">{segmentStats.hair}</span>
+                </div>
+                <div className="memory-overview-divider" />
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Body Silhouette</span>
+                  <span className="memory-overview-val">{segmentStats.body}</span>
+                </div>
+                <div className="memory-overview-divider" />
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Skin & Complexion</span>
+                  <span className="memory-overview-val">{segmentStats.complexion}</span>
+                </div>
               </div>
-              <h3 className="identity-empty-title">
-                {recipeSearch ? 'No Matching Recipes Found' : 'No Approved Edits in Memory Yet'}
-              </h3>
-              <p className="identity-empty-desc">
-                {recipeSearch
-                  ? 'Try a different keyword or clear your search query.'
-                  : 'When you generate a look in Create and click "Looks like me", the system captures the reference combination and segment settings here so you can inspect and reuse what works.'}
-              </p>
-              {!recipeSearch && (
-                <button
-                  type="button"
-                  className="identity-upload-empty-btn"
-                  onClick={onGoToCreate}
-                >
-                  <Sparkles size={16} />
-                  <span>Go to Create Studio</span>
-                </button>
+
+              {/* Search bar for recipes */}
+              {successfulEdits.length > 2 && (
+                <div className="memory-search-row">
+                  <Search size={14} style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    className="memory-search-input"
+                    placeholder="Search approved recipes by prompt or keyword..."
+                    value={recipeSearch}
+                    onChange={(e) => setRecipeSearch(e.target.value)}
+                  />
+                  {recipeSearch && (
+                    <button
+                      type="button"
+                      className="memory-search-clear"
+                      onClick={() => setRecipeSearch('')}
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
               )}
-            </div>
-          ) : (
-            <div className="memory-recipes-grid">
-              {filteredRecipes.map((recipe) => {
-                const recipeRefIds = Array.isArray(recipe.identityRefIds) ? recipe.identityRefIds : [];
-                const weights = recipe.segmentWeights || {};
-                const approvedSegs = Array.isArray(recipe.approvedSegments) ? recipe.approvedSegments : [];
 
-                return (
-                  <div key={recipe.id || recipe.generationId} className="memory-recipe-card">
-                    {/* Header */}
-                    <div className="memory-recipe-header">
-                      <div className="memory-recipe-title-wrap">
-                        <span className="memory-recipe-prompt">
-                          {recipe.prompt ? `"${recipe.prompt}"` : 'Outfit styling edit'}
-                        </span>
-                        {recipe.timestamp && (
-                          <span className="memory-recipe-date">
-                            <Clock size={10} />
-                            <span>{formatTimestamp(recipe.timestamp)}</span>
-                          </span>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        className="memory-recipe-delete-btn"
-                        onClick={() => onDeleteMemory?.(recipe.id || recipe.generationId)}
-                        title="Remove this recipe from memory"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
+              {/* Recipes List */}
+              {filteredRecipes.length === 0 ? (
+                <div className="identity-empty-state" style={{ padding: '36px 20px' }}>
+                  <div className="identity-empty-icon">
+                    <Smile size={28} style={{ color: 'var(--accent-pink-dark)' }} />
+                  </div>
+                  <h3 className="identity-empty-title">
+                    {recipeSearch ? 'No Matching Recipes Found' : 'No Approved Edits in Memory Yet'}
+                  </h3>
+                  <p className="identity-empty-desc">
+                    {recipeSearch
+                      ? 'Try a different keyword or clear your search query.'
+                      : 'When you generate a look in Create and click "Looks like me", the system captures the reference combination and segment settings here so you can inspect and reuse what works.'}
+                  </p>
+                  {!recipeSearch && (
+                    <button
+                      type="button"
+                      className="identity-upload-empty-btn"
+                      onClick={onGoToCreate}
+                    >
+                      <Sparkles size={16} />
+                      <span>Go to Create Studio</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="memory-recipes-grid">
+                  {filteredRecipes.map((recipe) => {
+                    const recipeRefIds = Array.isArray(recipe.identityRefIds) ? recipe.identityRefIds : [];
+                    const weights = recipe.segmentWeights || {};
+                    const approvedSegs = Array.isArray(recipe.approvedSegments) ? recipe.approvedSegments : [];
 
-                    {/* Active References Thumbnails & Roles */}
-                    <div className="memory-recipe-refs-row">
-                      <span className="memory-recipe-sub-label">References:</span>
-                      <div className="memory-recipe-thumbs">
-                        {recipeRefIds.map((refId) => {
-                          const refObj = refMap.get(refId);
-                          const role = weights[refId] || 'auto';
-                          return (
-                            <div key={refId} className="memory-ref-thumb-box" title={refObj?.label || 'Identity Reference'}>
-                              {refObj ? (
-                                <img
-                                  src={refObj.imageUrl || refObj.dataUrl}
-                                  alt={refObj.label || 'Ref'}
-                                  className="memory-ref-thumb-img"
-                                />
-                              ) : (
-                                <div className="memory-ref-thumb-fallback">
-                                  <UserCheck size={12} />
-                                </div>
-                              )}
-                              <span className="memory-ref-role-tag">{role}</span>
-                            </div>
-                          );
-                        })}
-                        {recipeRefIds.length === 0 && (
-                          <span className="memory-no-refs-tag">Base photo only</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Endorsed Segments Chips */}
-                    {approvedSegs.length > 0 && (
-                      <div className="memory-recipe-segments-row">
-                        <span className="memory-recipe-sub-label">Endorsed:</span>
-                        <div className="memory-recipe-seg-pills">
-                          {approvedSegs.map((segId) => {
-                            const segDef = FINE_GRAINED_SEGMENTS.find((s) => s.id === segId);
-                            return (
-                              <span key={segId} className="memory-seg-pill">
-                                <Check size={10} strokeWidth={2.6} />
-                                <span>{segDef ? segDef.label : segId}</span>
+                    return (
+                      <div key={recipe.id || recipe.generationId} className="memory-recipe-card">
+                        {/* Header */}
+                        <div className="memory-recipe-header">
+                          <div className="memory-recipe-title-wrap">
+                            <span className="memory-recipe-prompt">
+                              {recipe.prompt ? `"${recipe.prompt}"` : 'Outfit styling edit'}
+                            </span>
+                            {recipe.timestamp && (
+                              <span className="memory-recipe-date">
+                                <Clock size={10} />
+                                <span>{formatTimestamp(recipe.timestamp)}</span>
                               </span>
-                            );
-                          })}
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="memory-recipe-delete-btn"
+                            onClick={() => onDeleteMemory?.(recipe.id || recipe.generationId)}
+                            title="Remove this recipe from memory"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+
+                        {/* Active References Thumbnails & Roles */}
+                        <div className="memory-recipe-refs-row">
+                          <span className="memory-recipe-sub-label">References:</span>
+                          <div className="memory-recipe-thumbs">
+                            {recipeRefIds.map((refId) => {
+                              const refObj = refMap.get(refId);
+                              const role = weights[refId] || 'auto';
+                              return (
+                                <div key={refId} className="memory-ref-thumb-box" title={refObj?.label || 'Identity Reference'}>
+                                  {refObj ? (
+                                    <img
+                                      src={refObj.imageUrl || refObj.dataUrl}
+                                      alt={refObj.label || 'Ref'}
+                                      className="memory-ref-thumb-img"
+                                    />
+                                  ) : (
+                                    <div className="memory-ref-thumb-fallback">
+                                      <UserCheck size={12} />
+                                    </div>
+                                  )}
+                                  <span className="memory-ref-role-tag">{role}</span>
+                                </div>
+                              );
+                            })}
+                            {recipeRefIds.length === 0 && (
+                              <span className="memory-no-refs-tag">Base photo only</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Endorsed Segments Chips */}
+                        {approvedSegs.length > 0 && (
+                          <div className="memory-recipe-segments-row">
+                            <span className="memory-recipe-sub-label">Endorsed:</span>
+                            <div className="memory-recipe-seg-pills">
+                              {approvedSegs.map((segId) => {
+                                const segDef = FINE_GRAINED_SEGMENTS.find((s) => s.id === segId);
+                                return (
+                                  <span key={segId} className="memory-seg-pill">
+                                    <Check size={10} strokeWidth={2.6} />
+                                    <span>{segDef ? segDef.label : segId}</span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Footer Actions */}
+                        <div className="memory-recipe-footer">
+                          <button
+                            type="button"
+                            className="memory-apply-btn"
+                            onClick={() => onApplyMemoryRecipe?.(recipe)}
+                          >
+                            <span>Apply this Recipe</span>
+                            <ArrowRight size={13} />
+                          </button>
                         </div>
                       </div>
-                    )}
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            /* NEGATIVE FEEDBACK / FAILURES SUB-TAB */
+            <>
+              {/* Overview Stats Bar for Failures */}
+              <div className="memory-overview-bar failure-bar">
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Reported Issues</span>
+                  <span className="memory-overview-val" style={{ color: '#d32f2f' }}>{failedEdits.length}</span>
+                </div>
+                <div className="memory-overview-divider" />
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Face Changed</span>
+                  <span className="memory-overview-val">{failureStats.face_changed || 0}</span>
+                </div>
+                <div className="memory-overview-divider" />
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Body Altered</span>
+                  <span className="memory-overview-val">{failureStats.body_proportions_changed || 0}</span>
+                </div>
+                <div className="memory-overview-divider" />
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Hair Altered</span>
+                  <span className="memory-overview-val">{failureStats.hair_changed || 0}</span>
+                </div>
+                <div className="memory-overview-divider" />
+                <div className="memory-overview-item">
+                  <span className="memory-overview-label">Background Drift</span>
+                  <span className="memory-overview-val">{failureStats.background_changed || 0}</span>
+                </div>
+              </div>
 
-                    {/* Footer Actions */}
-                    <div className="memory-recipe-footer">
-                      <button
-                        type="button"
-                        className="memory-apply-btn"
-                        onClick={() => onApplyMemoryRecipe?.(recipe)}
-                      >
-                        <span>Apply this Recipe</span>
-                        <ArrowRight size={13} />
-                      </button>
-                    </div>
+              {/* Failures List */}
+              {filteredFailures.length === 0 ? (
+                <div className="identity-empty-state" style={{ padding: '36px 20px' }}>
+                  <div className="identity-empty-icon" style={{ background: 'rgba(255, 235, 238, 0.8)' }}>
+                    <ShieldCheck size={28} style={{ color: '#c62828' }} />
                   </div>
-                );
-              })}
-            </div>
+                  <h3 className="identity-empty-title">
+                    {recipeSearch ? 'No Matching Feedback Found' : 'No Negative Feedback Recorded'}
+                  </h3>
+                  <p className="identity-empty-desc">
+                    {recipeSearch
+                      ? 'Try a different search keyword.'
+                      : 'When a generated look drifts or doesn’t preserve your identity, click "Doesn’t look like me" in Create. The app will log the issue to avoid repeating it in future reference selection and prompt planning.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="memory-recipes-grid">
+                  {filteredFailures.map((fail) => {
+                    const failRefIds = Array.isArray(fail.identityRefIds) ? fail.identityRefIds : [];
+                    const reasons = Array.isArray(fail.failureReasons) ? fail.failureReasons : [];
+
+                    return (
+                      <div key={fail.id || fail.generationId} className="memory-recipe-card failure-recipe-card">
+                        {/* Header */}
+                        <div className="memory-recipe-header">
+                          <div className="memory-recipe-title-wrap">
+                            <span className="memory-recipe-prompt">
+                              {fail.prompt ? `"${fail.prompt}"` : 'Outfit styling edit'}
+                            </span>
+                            {fail.timestamp && (
+                              <span className="memory-recipe-date">
+                                <Clock size={10} />
+                                <span>{formatTimestamp(fail.timestamp)}</span>
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="memory-recipe-delete-btn"
+                            onClick={() => onDeleteFailedMemory?.(fail.id || fail.generationId)}
+                            title="Remove this negative feedback report from memory"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+
+                        {/* Reported Reasons Chips */}
+                        {reasons.length > 0 && (
+                          <div className="memory-recipe-segments-row">
+                            <span className="memory-recipe-sub-label">Issues:</span>
+                            <div className="memory-recipe-seg-pills">
+                              {reasons.map((rId) => {
+                                const rDef = FAILURE_REASONS.find((f) => f.id === rId);
+                                return (
+                                  <span key={rId} className="memory-fail-pill">
+                                    <AlertTriangle size={10} strokeWidth={2.4} />
+                                    <span>{rDef ? rDef.label : rId}</span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* User custom note if present */}
+                        {fail.userNote && (
+                          <p className="memory-failure-user-note">
+                            <strong>Note:</strong> {fail.userNote}
+                          </p>
+                        )}
+
+                        {/* References that were active */}
+                        {failRefIds.length > 0 && (
+                          <div className="memory-recipe-refs-row" style={{ marginTop: 8 }}>
+                            <span className="memory-recipe-sub-label">Active Refs:</span>
+                            <div className="memory-recipe-thumbs">
+                              {failRefIds.map((refId) => {
+                                const refObj = refMap.get(refId);
+                                return (
+                                  <div key={refId} className="memory-ref-thumb-box" title={refObj?.label || 'Reference'}>
+                                    {refObj ? (
+                                      <img
+                                        src={refObj.imageUrl || refObj.dataUrl}
+                                        alt={refObj.label || 'Ref'}
+                                        className="memory-ref-thumb-img"
+                                      />
+                                    ) : (
+                                      <div className="memory-ref-thumb-fallback">
+                                        <UserCheck size={12} />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (
@@ -551,15 +741,26 @@ export default function IdentityBank({
                         <span className="identity-card-label" title={item.label}>
                           {item.label || 'Identity Reference'}
                         </span>
-                        {refStats[item.id]?.approvedCount > 0 && (
-                          <span
-                            className="identity-approved-pill"
-                            title={`User approved in ${refStats[item.id].approvedCount} edit(s)`}
-                          >
-                            <Smile size={10} />
-                            <span>{refStats[item.id].approvedCount}</span>
-                          </span>
-                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          {refStats[item.id]?.approvedCount > 0 && (
+                            <span
+                              className="identity-approved-pill"
+                              title={`User approved in ${refStats[item.id].approvedCount} edit(s)`}
+                            >
+                              <Smile size={10} />
+                              <span>{refStats[item.id].approvedCount}</span>
+                            </span>
+                          )}
+                          {refFailureStats[item.id]?.failureCount > 0 && (
+                            <span
+                              className="identity-failure-pill"
+                              title={`Reported issue in ${refFailureStats[item.id].failureCount} edit(s)`}
+                            >
+                              <Frown size={10} />
+                              <span>{refFailureStats[item.id].failureCount}</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Tags */}

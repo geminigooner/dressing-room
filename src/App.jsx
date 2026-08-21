@@ -21,6 +21,8 @@ import {
   ExternalLink,
   UserCheck,
   Smile,
+  Frown,
+  AlertTriangle,
   CheckCircle2
 } from 'lucide-react';
 import { editPhoto, fileToPart, imageSourceToPart, fetchGallery, saveToGallery, deleteFromGallery } from './lib/api.js';
@@ -45,8 +47,14 @@ import {
   unrecordSuccessfulEdit,
   updateApprovedSegments,
   deleteSuccessfulEdit,
+  getFailedEditsMemory,
+  recordFailedEdit,
+  unrecordFailedEdit,
+  updateFailedEditReasons,
+  deleteFailedEdit,
   generateMemoryInsightsSummary,
   FINE_GRAINED_SEGMENTS,
+  FAILURE_REASONS,
 } from './lib/memory.js';
 import GeminiAssistantSheet from './components/GeminiAssistantSheet.jsx';
 import IdentityBank from './components/IdentityBank.jsx';
@@ -78,6 +86,14 @@ export default function App() {
   const [isCurrentApproved, setIsCurrentApproved] = useState(false);
   const [currentApprovedSegments, setCurrentApprovedSegments] = useState([]);
   const [approvalToast, setApprovalToast] = useState(false);
+
+  // Failed Edit Memory / Negative Feedback State
+  const [failedEdits, setFailedEdits] = useState([]);
+  const [isCurrentRejected, setIsCurrentRejected] = useState(false);
+  const [currentFailureReasons, setCurrentFailureReasons] = useState([]);
+  const [currentFailureNote, setCurrentFailureNote] = useState('');
+  const [failureToast, setFailureToast] = useState(false);
+  const [showFailureReasonDrawer, setShowFailureReasonDrawer] = useState(false);
 
   // Gallery state
   const [galleryItems, setGalleryItems] = useState([]);
@@ -118,8 +134,11 @@ export default function App() {
     segmentWeights,
     identityContract,
     successMemoryCount: successfulEdits.length,
+    failedMemoryCount: failedEdits.length,
     isCurrentResultApproved: isCurrentApproved,
-    memoryInsights: generateMemoryInsightsSummary(successfulEdits, identityReferences, prompt),
+    isCurrentResultRejected: isCurrentRejected,
+    currentFailureReasons,
+    memoryInsights: generateMemoryInsightsSummary(successfulEdits, failedEdits, identityReferences, prompt),
     prompt: prompt || '',
     isGenerating: isLoading,
     hasResultImage: Boolean(resultImage),
@@ -141,18 +160,20 @@ export default function App() {
     lastErrorMessage: errorMessage,
   };
 
-  // Load saved gallery looks, identity references, and successful edit memory on mount (survives refresh)
+  // Load saved gallery looks, identity references, and edit memory on mount (survives refresh)
   useEffect(() => {
     async function loadInitialData() {
       try {
-        const [items, idRefs, memories] = await Promise.all([
+        const [items, idRefs, memories, failures] = await Promise.all([
           fetchGallery(),
           getIdentityReferences(),
           getSuccessfulEditsMemory(),
+          getFailedEditsMemory(),
         ]);
         setGalleryItems(items || []);
         setIdentityReferences(idRefs || []);
         setSuccessfulEdits(memories || []);
+        setFailedEdits(failures || []);
 
         const savedSelectedIds = getSelectedIdentityIds();
         if (savedSelectedIds && savedSelectedIds.length > 0) {
@@ -299,6 +320,11 @@ export default function App() {
     setErrorMessage(null);
     setSaveSuccess(false);
     setIsCurrentApproved(false);
+    setIsCurrentRejected(false);
+    setCurrentApprovedSegments([]);
+    setCurrentFailureReasons([]);
+    setCurrentFailureNote('');
+    setShowFailureReasonDrawer(false);
 
     try {
       // 1. Convert photo inputs to parts
@@ -329,6 +355,7 @@ export default function App() {
         segmentWeights,
         identityContract,
         successfulMemories: successfulEdits,
+        failedMemories: failedEdits,
         allowSearch: true,
       });
 
@@ -401,6 +428,17 @@ export default function App() {
         const updated = await getSuccessfulEditsMemory();
         setSuccessfulEdits(updated);
       } else {
+        // If previously marked as failure, clear failure record
+        if (isCurrentRejected) {
+          await unrecordFailedEdit(currentGenerationData.generationId);
+          setIsCurrentRejected(false);
+          setCurrentFailureReasons([]);
+          setCurrentFailureNote('');
+          setShowFailureReasonDrawer(false);
+          const updatedFailures = await getFailedEditsMemory();
+          setFailedEdits(updatedFailures);
+        }
+
         await recordSuccessfulEdit({
           ...currentGenerationData,
           approvedSegments: currentApprovedSegments,
@@ -433,7 +471,77 @@ export default function App() {
     }
   };
 
-  // Delete a memory record
+  // Toggle "Doesn't look like me" User Negative Feedback
+  const handleToggleDoesntLookLikeMe = async () => {
+    if (!currentGenerationData || !resultImage) return;
+
+    try {
+      if (isCurrentRejected) {
+        await unrecordFailedEdit(currentGenerationData.generationId);
+        setIsCurrentRejected(false);
+        setCurrentFailureReasons([]);
+        setCurrentFailureNote('');
+        setShowFailureReasonDrawer(false);
+        const updated = await getFailedEditsMemory();
+        setFailedEdits(updated);
+      } else {
+        // If previously approved, unrecord approval first
+        if (isCurrentApproved) {
+          await unrecordSuccessfulEdit(currentGenerationData.generationId);
+          setIsCurrentApproved(false);
+          setCurrentApprovedSegments([]);
+          const updatedSuccess = await getSuccessfulEditsMemory();
+          setSuccessfulEdits(updatedSuccess);
+        }
+
+        await recordFailedEdit({
+          ...currentGenerationData,
+          failureReasons: currentFailureReasons,
+          userNote: currentFailureNote,
+        });
+        setIsCurrentRejected(true);
+        setShowFailureReasonDrawer(true);
+        setFailureToast(true);
+        setTimeout(() => setFailureToast(false), 3500);
+        const updated = await getFailedEditsMemory();
+        setFailedEdits(updated);
+      }
+    } catch (err) {
+      console.error('Failed to toggle negative feedback:', err);
+    }
+  };
+
+  // Toggle specific failure reason chip
+  const handleToggleFailureReason = async (reasonId) => {
+    if (!currentGenerationData) return;
+    const nextReasons = currentFailureReasons.includes(reasonId)
+      ? currentFailureReasons.filter((r) => r !== reasonId)
+      : [...currentFailureReasons, reasonId];
+
+    setCurrentFailureReasons(nextReasons);
+    try {
+      await updateFailedEditReasons(currentGenerationData.generationId, nextReasons, currentFailureNote);
+      const updated = await getFailedEditsMemory();
+      setFailedEdits(updated);
+    } catch (err) {
+      console.error('Failed to update failure reasons:', err);
+    }
+  };
+
+  // Update failure custom note
+  const handleUpdateFailureNote = async (noteText) => {
+    if (!currentGenerationData) return;
+    setCurrentFailureNote(noteText);
+    try {
+      await updateFailedEditReasons(currentGenerationData.generationId, currentFailureReasons, noteText);
+      const updated = await getFailedEditsMemory();
+      setFailedEdits(updated);
+    } catch (err) {
+      console.error('Failed to update failure note:', err);
+    }
+  };
+
+  // Delete an approved memory record
   const handleDeleteMemory = async (memoryOrGenId) => {
     try {
       await deleteSuccessfulEdit(memoryOrGenId);
@@ -445,6 +553,23 @@ export default function App() {
       setSuccessfulEdits(updated);
     } catch (err) {
       console.error('Failed to delete memory record:', err);
+    }
+  };
+
+  // Delete a failed memory record
+  const handleDeleteFailedMemory = async (memoryOrGenId) => {
+    try {
+      await deleteFailedEdit(memoryOrGenId);
+      if (currentGenerationData && (currentGenerationData.generationId === memoryOrGenId)) {
+        setIsCurrentRejected(false);
+        setCurrentFailureReasons([]);
+        setCurrentFailureNote('');
+        setShowFailureReasonDrawer(false);
+      }
+      const updated = await getFailedEditsMemory();
+      setFailedEdits(updated);
+    } catch (err) {
+      console.error('Failed to delete failed edit record:', err);
     }
   };
 
@@ -980,35 +1105,64 @@ export default function App() {
               </div>
             </div>
 
-            {/* Action Buttons */}
+            {/* Action Buttons & Feedback */}
             {resultImage && (
               <div className="result-approval-row">
-                <button
-                  type="button"
-                  id="btn-looks-like-me"
-                  className={`result-looks-like-me-btn ${isCurrentApproved ? 'approved' : ''}`}
-                  onClick={handleToggleLooksLikeMe}
-                  title={
-                    isCurrentApproved
-                      ? 'Approved! Explicitly remembered as a high-fidelity result.'
-                      : 'Explicitly mark this result as accurately preserving your identity'
-                  }
-                >
-                  {isCurrentApproved ? (
-                    <>
-                      <Check size={14} strokeWidth={2.6} className="approval-icon" />
-                      <span className="approval-title">Looks like me</span>
-                      <span className="approval-status-pill">Saved to memory</span>
-                    </>
-                  ) : (
-                    <>
-                      <Smile size={14} className="approval-icon" />
-                      <span className="approval-title">Looks like me</span>
-                      <span className="approval-sub">Remember what worked</span>
-                    </>
-                  )}
-                </button>
+                <div className="result-feedback-group">
+                  {/* Positive Feedback: Looks like me */}
+                  <button
+                    type="button"
+                    id="btn-looks-like-me"
+                    className={`result-looks-like-me-btn ${isCurrentApproved ? 'approved' : ''}`}
+                    onClick={handleToggleLooksLikeMe}
+                    title={
+                      isCurrentApproved
+                        ? 'Approved! Explicitly remembered as a high-fidelity result.'
+                        : 'Explicitly mark this result as accurately preserving your identity'
+                    }
+                  >
+                    {isCurrentApproved ? (
+                      <>
+                        <Check size={14} strokeWidth={2.6} className="approval-icon" />
+                        <span className="approval-title">Looks like me</span>
+                        <span className="approval-status-pill">Saved</span>
+                      </>
+                    ) : (
+                      <>
+                        <Smile size={14} className="approval-icon" />
+                        <span className="approval-title">Looks like me</span>
+                      </>
+                    )}
+                  </button>
 
+                  {/* Negative Feedback: Doesn't look like me */}
+                  <button
+                    type="button"
+                    id="btn-doesnt-look-like-me"
+                    className={`result-doesnt-look-btn ${isCurrentRejected ? 'rejected' : ''}`}
+                    onClick={handleToggleDoesntLookLikeMe}
+                    title={
+                      isCurrentRejected
+                        ? 'Negative feedback logged. The system will avoid this pattern.'
+                        : 'Flag that this result drifted or failed to preserve your look'
+                    }
+                  >
+                    {isCurrentRejected ? (
+                      <>
+                        <AlertTriangle size={13} className="approval-icon" />
+                        <span className="approval-title">Doesn’t look like me</span>
+                        <span className="approval-status-pill" style={{ background: 'rgba(0,0,0,0.2)' }}>Logged</span>
+                      </>
+                    ) : (
+                      <>
+                        <Frown size={13} className="approval-icon" />
+                        <span className="approval-title">Doesn’t look like me</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Positive segment feedback chips */}
                 {isCurrentApproved && (
                   <div className="approval-segment-feedback-wrap">
                     <span className="approval-segment-title">What preserved your look best? (Optional)</span>
@@ -1032,10 +1186,58 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Negative failure reasons drawer */}
+                {isCurrentRejected && (
+                  <div className="failure-reason-drawer" id="failure-reason-drawer">
+                    <div className="failure-reason-header">
+                      <span className="failure-reason-title">
+                        <AlertTriangle size={13} />
+                        <span>What didn’t look right?</span>
+                      </span>
+                      <span className="failure-reason-subtitle">Helps guide future edits</span>
+                    </div>
+
+                    <div className="failure-reasons-grid">
+                      {FAILURE_REASONS.map((r) => {
+                        const isSelected = currentFailureReasons.includes(r.id);
+                        return (
+                          <button
+                            key={r.id}
+                            type="button"
+                            className={`failure-reason-chip ${isSelected ? 'active' : ''}`}
+                            onClick={() => handleToggleFailureReason(r.id)}
+                            title={r.description}
+                          >
+                            {isSelected && <Check size={10} strokeWidth={2.6} />}
+                            <span>{r.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="failure-note-row">
+                      <input
+                        type="text"
+                        className="failure-note-input"
+                        placeholder="Add quick note (e.g. skin tone too light, jawline changed)..."
+                        value={currentFailureNote}
+                        onChange={(e) => handleUpdateFailureNote(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {approvalToast && (
                   <div className="approval-toast-banner" role="status">
                     <CheckCircle2 size={12} />
                     <span>Saved to Edit Memory! References will learn what worked.</span>
+                  </div>
+                )}
+
+                {failureToast && (
+                  <div className="failure-toast-banner" role="status">
+                    <AlertTriangle size={12} />
+                    <span>Feedback saved! Prompt intelligence will avoid these issues on next runs.</span>
                   </div>
                 )}
               </div>
@@ -1142,11 +1344,13 @@ export default function App() {
           selectedIdentityIds={selectedIdentityIds}
           identityContract={identityContract}
           successfulEdits={successfulEdits}
+          failedEdits={failedEdits}
           onSaveReference={handleSaveIdentityReference}
           onDeleteReference={handleDeleteIdentityReference}
           onToggleSelect={handleToggleSelectIdentity}
           onToggleFavorite={handleToggleFavoriteIdentity}
           onDeleteMemory={handleDeleteMemory}
+          onDeleteFailedMemory={handleDeleteFailedMemory}
           onApplyMemoryRecipe={handleApplyMemoryRecipe}
           onGoToCreate={() => {
             setActiveTab('create');

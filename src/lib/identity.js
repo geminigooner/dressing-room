@@ -84,11 +84,11 @@ export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto
     if (tags.includes('face') || textCorpus.includes('hair')) score += 15;
   }
 
-  // Secondary Preference: User-Approved Edit Memory synergy (capped so visual relevance dominates)
-  const memoryBonus = scoreMemorySynergy(item, prompt, selectedIds, activeSegment);
-  score += memoryBonus;
+  // Secondary Preference: User-Approved & Failed Edit Memory synergy (capped so visual relevance dominates)
+  const memoryAdjustment = scoreMemorySynergy(item, prompt, selectedIds, activeSegment);
+  score += memoryAdjustment;
 
-  return score;
+  return Math.max(0, score);
 }
 
 const IDB_NAME = 'DressingRoomDB';

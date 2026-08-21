@@ -181,6 +181,7 @@ CRITICAL CONSTRAINT: Provide only factual descriptive information. Do NOT includ
  * @param {Record<string, string>} params.segmentWeights - Role weights assigned to references (face/hair/body/auto)
  * @param {object} params.identityContract - Identity fidelity contract settings
  * @param {Array<object>} params.successfulMemories - Relevant historical successful edit records
+ * @param {Array<object>} params.failedMemories - Relevant historical failed edit records (negative feedback)
  * @param {object} params.searchGrounding - Optional search grounding result
  * @returns {object} Structured edit plan with concise natural-language final instruction
  */
@@ -192,6 +193,7 @@ export function buildStructuredEditPlan({
   segmentWeights = {},
   identityContract = {},
   successfulMemories = [],
+  failedMemories = [],
   searchGrounding = null,
 }) {
   const originalRequest = userPrompt.trim() || (hasOutfitReference ? 'Wear the outfit shown in the reference' : 'Style a realistic, modern outfit');
@@ -243,20 +245,43 @@ export function buildStructuredEditPlan({
     };
   });
 
-  // 4. Relevant Memory Guidance
+  // 4. Memory Guidance (Successes and Corrective Guidance from Failures)
   const relevantKeywords = extractEditKeywords(originalRequest);
-  const matchingMemories = (successfulMemories || []).filter((mem) => {
+  const matchingSuccesses = (successfulMemories || []).filter((mem) => {
     const memKw = Array.isArray(mem.keywords) ? mem.keywords : [];
     return relevantKeywords.some((k) => memKw.includes(k));
   });
 
-  const knownPatterns = matchingMemories.slice(0, 2).map((m) => ({
+  const knownPatterns = matchingSuccesses.slice(0, 2).map((m) => ({
     prompt: m.prompt,
     endorsedSegments: m.approvedSegments || [],
   }));
 
+  // Analyze failure patterns (weak evidence to provide targeted corrective guidance without prompt bloat)
+  const failureReasonCounts = {};
+  for (const failMem of (failedMemories || [])) {
+    const reasons = Array.isArray(failMem.failureReasons) ? failMem.failureReasons : [];
+    reasons.forEach((r) => {
+      failureReasonCounts[r] = (failureReasonCounts[r] || 0) + 1;
+    });
+  }
+
+  const correctiveClauses = [];
+  if (failureReasonCounts['body_proportions_changed'] >= 1) {
+    correctiveClauses.push('Strictly avoid warping or slimming the body silhouette.');
+  }
+  if (failureReasonCounts['face_changed'] >= 1 || failureReasonCounts['too_generic'] >= 1) {
+    correctiveClauses.push('Do not substitute a generic AI face or alter unique eye/nose shapes.');
+  }
+  if (failureReasonCounts['background_changed'] >= 1 && correctiveClauses.length < 2) {
+    correctiveClauses.push('Leave original background architecture unchanged.');
+  }
+  if (failureReasonCounts['skin_tone_changed'] >= 1 && correctiveClauses.length < 2) {
+    correctiveClauses.push('Preserve original natural complexion without skin lightening.');
+  }
+
   // 5. Synthesize Clean, Natural-Language Image-Edit Instruction (Concise & Direct)
-  // Strict hierarchy: User Intent + Base Photo Authority + Outfit/Style + Identity Anchor + Preservations
+  // Strict hierarchy: User Intent + Base Photo Authority + Outfit/Style + Identity Anchor + Preservations + Corrective Guardrail
   const instructionClauses = [];
 
   // Goal & Outfit clause
@@ -290,6 +315,11 @@ export function buildStructuredEditPlan({
     `Maintain the exact original pose, natural body proportions, background environment, lighting, and camera framing with zero drift.`
   );
 
+  // Corrective Guidance (only if past user rejections indicated recurring failure patterns, max 1 concise sentence)
+  if (correctiveClauses.length > 0) {
+    instructionClauses.push(correctiveClauses.slice(0, 2).join(' '));
+  }
+
   const finalConciseInstruction = instructionClauses.join(' ');
 
   return {
@@ -310,6 +340,8 @@ export function buildStructuredEditPlan({
     identityPreservationRequirements: identityRequirements,
     elementsUnchanged,
     knownSuccessfulPatterns: knownPatterns,
+    failurePatternsAvoided: Object.entries(failureReasonCounts).map(([reason, count]) => ({ reason, count })),
+    correctiveGuidanceApplied: correctiveClauses,
     searchGrounding: searchGrounding && searchGrounding.used
       ? {
           used: true,
@@ -338,6 +370,7 @@ export async function planEditPrompt({
   segmentWeights = {},
   identityContract = {},
   successfulMemories = [],
+  failedMemories = [],
   allowSearch = true,
 }) {
   let searchResult = null;
@@ -357,6 +390,7 @@ export async function planEditPrompt({
     segmentWeights,
     identityContract,
     successfulMemories,
+    failedMemories,
     searchGrounding: searchResult,
   });
 

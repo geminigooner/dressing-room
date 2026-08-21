@@ -11,23 +11,32 @@ import {
   ShieldCheck,
   Tag,
   Info,
-  Edit2
+  Edit2,
+  Smile,
+  Search,
+  Clock,
+  ArrowRight
 } from 'lucide-react';
 import { DEFAULT_IDENTITY_TAGS, saveIdentityReference } from '../lib/identity.js';
+import { getAllReferenceSuccessStats, FINE_GRAINED_SEGMENTS } from '../lib/memory.js';
 
 export default function IdentityBank({
   identityReferences = [],
   selectedIdentityIds = [],
   identityContract,
+  successfulEdits = [],
   onSaveReference,
   onDeleteReference,
   onToggleSelect,
   onToggleFavorite,
+  onDeleteMemory,
+  onApplyMemoryRecipe,
   onGoToCreate,
 }) {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showContractDetails, setShowContractDetails] = useState(false);
-  const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'favorites'
+  const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'favorites' | 'memory'
+  const [recipeSearch, setRecipeSearch] = useState('');
 
   // Upload Form State
   const [uploadFile, setUploadFile] = useState(null);
@@ -37,6 +46,8 @@ export default function IdentityBank({
   const [notes, setNotes] = useState('');
   const [isFavorite, setIsFavorite] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const refStats = getAllReferenceSuccessStats();
 
   const fileInputRef = useRef(null);
 
@@ -105,6 +116,42 @@ export default function IdentityBank({
     return true;
   });
 
+  // Filter recipes for memory tab
+  const filteredRecipes = successfulEdits.filter((recipe) => {
+    if (!recipeSearch) return true;
+    const q = recipeSearch.toLowerCase();
+    const promptMatch = recipe.prompt && recipe.prompt.toLowerCase().includes(q);
+    const kwMatch = recipe.keywords && recipe.keywords.some((k) => k.toLowerCase().includes(q));
+    return promptMatch || kwMatch;
+  });
+
+  // Calculate segment breakdown across memory
+  const segmentStats = {
+    face: 0,
+    hair: 0,
+    body: 0,
+    complexion: 0,
+  };
+  successfulEdits.forEach((recipe) => {
+    (recipe.approvedSegments || []).forEach((seg) => {
+      if (segmentStats[seg] !== undefined) {
+        segmentStats[seg] += 1;
+      }
+    });
+  });
+
+  const refMap = new Map(identityReferences.map((r) => [r.id, r]));
+
+  const formatTimestamp = (ts) => {
+    if (!ts) return '';
+    try {
+      const date = new Date(ts);
+      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } catch {
+      return '';
+    }
+  };
+
   return (
     <div className="identity-section-card" id="identity-references-screen">
       {/* Top Header */}
@@ -114,9 +161,9 @@ export default function IdentityBank({
             <UserCheck size={20} />
           </div>
           <div>
-            <h2 className="identity-title">Identity References</h2>
+            <h2 className="identity-title">Identity References & Memory</h2>
             <p className="identity-subtitle">
-              Save your best identity photos for more consistent virtual dressing room edits.
+              Save your best identity photos and review recipes learned from your approved results.
             </p>
           </div>
         </div>
@@ -179,38 +226,58 @@ export default function IdentityBank({
       {/* Active Selection Summary Bar & Filters */}
       <div className="identity-selection-bar">
         <div className="identity-selection-stats">
-          <span className="identity-selection-count">
-            {selectedIdentityIds.length} / 4 Selected for Create
-          </span>
-          <span className="identity-selection-hint">
-            {selectedIdentityIds.length === 0
-              ? 'Tap cards below to choose references for generation'
-              : 'Selected references will guide facial & body consistency'}
-          </span>
+          {activeFilter === 'memory' ? (
+            <>
+              <span className="identity-selection-count">
+                {successfulEdits.length} Approved Style Recipes in Memory
+              </span>
+              <span className="identity-selection-hint">
+                Learned combinations from edits marked with "Looks like me"
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="identity-selection-count">
+                {selectedIdentityIds.length} / 4 Selected for Create
+              </span>
+              <span className="identity-selection-hint">
+                {selectedIdentityIds.length === 0
+                  ? 'Tap cards below to choose references for generation'
+                  : 'Selected references will guide facial & body consistency'}
+              </span>
+            </>
+          )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {identityReferences.length > 0 && (
-            <div className="identity-filter-pills">
-              <button
-                type="button"
-                className={`identity-filter-btn ${activeFilter === 'all' ? 'active' : ''}`}
-                onClick={() => setActiveFilter('all')}
-              >
-                All ({identityReferences.length})
-              </button>
-              <button
-                type="button"
-                className={`identity-filter-btn ${activeFilter === 'favorites' ? 'active' : ''}`}
-                onClick={() => setActiveFilter('favorites')}
-              >
-                <Heart size={12} fill={activeFilter === 'favorites' ? 'currentColor' : 'none'} />
-                <span>Favorites</span>
-              </button>
-            </div>
-          )}
+          <div className="identity-filter-pills">
+            <button
+              type="button"
+              className={`identity-filter-btn ${activeFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setActiveFilter('all')}
+            >
+              All ({identityReferences.length})
+            </button>
+            <button
+              type="button"
+              className={`identity-filter-btn ${activeFilter === 'favorites' ? 'active' : ''}`}
+              onClick={() => setActiveFilter('favorites')}
+            >
+              <Heart size={12} fill={activeFilter === 'favorites' ? 'currentColor' : 'none'} />
+              <span>Favorites</span>
+            </button>
+            <button
+              type="button"
+              className={`identity-filter-btn memory-filter-btn ${activeFilter === 'memory' ? 'active' : ''}`}
+              onClick={() => setActiveFilter('memory')}
+              title="View approved combinations and recipes"
+            >
+              <Smile size={12} />
+              <span>Memory Bank ({successfulEdits.length})</span>
+            </button>
+          </div>
 
-          {selectedIdentityIds.length > 0 && (
+          {activeFilter !== 'memory' && selectedIdentityIds.length > 0 && (
             <button
               type="button"
               className="identity-use-create-btn"
@@ -223,118 +290,307 @@ export default function IdentityBank({
         </div>
       </div>
 
-      {/* Identity References Grid */}
-      {filteredReferences.length === 0 ? (
-        <div className="identity-empty-state">
-          <div className="identity-empty-icon">
-            <ImagePlus size={28} />
+      {/* MEMORY BANK TAB VIEW */}
+      {activeFilter === 'memory' ? (
+        <div className="memory-inspection-container" id="memory-inspection-panel">
+          {/* Overview Stats Bar */}
+          <div className="memory-overview-bar">
+            <div className="memory-overview-item">
+              <span className="memory-overview-label">Total Approved</span>
+              <span className="memory-overview-val">{successfulEdits.length}</span>
+            </div>
+            <div className="memory-overview-divider" />
+            <div className="memory-overview-item">
+              <span className="memory-overview-label">Face Features</span>
+              <span className="memory-overview-val">{segmentStats.face}</span>
+            </div>
+            <div className="memory-overview-divider" />
+            <div className="memory-overview-item">
+              <span className="memory-overview-label">Hair & Hairstyle</span>
+              <span className="memory-overview-val">{segmentStats.hair}</span>
+            </div>
+            <div className="memory-overview-divider" />
+            <div className="memory-overview-item">
+              <span className="memory-overview-label">Body Silhouette</span>
+              <span className="memory-overview-val">{segmentStats.body}</span>
+            </div>
+            <div className="memory-overview-divider" />
+            <div className="memory-overview-item">
+              <span className="memory-overview-label">Skin & Complexion</span>
+              <span className="memory-overview-val">{segmentStats.complexion}</span>
+            </div>
           </div>
-          <h3 className="identity-empty-title">
-            {activeFilter === 'favorites' ? 'No Favorite References Yet' : 'No Identity Photos Saved Yet'}
-          </h3>
-          <p className="identity-empty-desc">
-            {activeFilter === 'favorites'
-              ? 'Tap the heart icon on any identity photo card to mark it as a favorite for quick styling selection.'
-              : 'Upload 2 to 4 clear photos of yourself (face close-up, mirror selfie, full body, different lighting) to anchor your look across all virtual dressing room styles.'}
-          </p>
-          <button
-            type="button"
-            className="identity-upload-empty-btn"
-            onClick={() => {
-              setActiveFilter('all');
-              setShowUploadModal(true);
-            }}
-          >
-            <Plus size={16} />
-            <span>Upload Reference Photo</span>
-          </button>
+
+          {/* Search bar for recipes */}
+          {successfulEdits.length > 2 && (
+            <div className="memory-search-row">
+              <Search size={14} style={{ color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                className="memory-search-input"
+                placeholder="Search approved recipes by prompt or keyword..."
+                value={recipeSearch}
+                onChange={(e) => setRecipeSearch(e.target.value)}
+              />
+              {recipeSearch && (
+                <button
+                  type="button"
+                  className="memory-search-clear"
+                  onClick={() => setRecipeSearch('')}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Recipes List */}
+          {filteredRecipes.length === 0 ? (
+            <div className="identity-empty-state" style={{ padding: '36px 20px' }}>
+              <div className="identity-empty-icon">
+                <Smile size={28} style={{ color: 'var(--accent-pink-dark)' }} />
+              </div>
+              <h3 className="identity-empty-title">
+                {recipeSearch ? 'No Matching Recipes Found' : 'No Approved Edits in Memory Yet'}
+              </h3>
+              <p className="identity-empty-desc">
+                {recipeSearch
+                  ? 'Try a different keyword or clear your search query.'
+                  : 'When you generate a look in Create and click "Looks like me", the system captures the reference combination and segment settings here so you can inspect and reuse what works.'}
+              </p>
+              {!recipeSearch && (
+                <button
+                  type="button"
+                  className="identity-upload-empty-btn"
+                  onClick={onGoToCreate}
+                >
+                  <Sparkles size={16} />
+                  <span>Go to Create Studio</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="memory-recipes-grid">
+              {filteredRecipes.map((recipe) => {
+                const recipeRefIds = Array.isArray(recipe.identityRefIds) ? recipe.identityRefIds : [];
+                const weights = recipe.segmentWeights || {};
+                const approvedSegs = Array.isArray(recipe.approvedSegments) ? recipe.approvedSegments : [];
+
+                return (
+                  <div key={recipe.id || recipe.generationId} className="memory-recipe-card">
+                    {/* Header */}
+                    <div className="memory-recipe-header">
+                      <div className="memory-recipe-title-wrap">
+                        <span className="memory-recipe-prompt">
+                          {recipe.prompt ? `"${recipe.prompt}"` : 'Outfit styling edit'}
+                        </span>
+                        {recipe.timestamp && (
+                          <span className="memory-recipe-date">
+                            <Clock size={10} />
+                            <span>{formatTimestamp(recipe.timestamp)}</span>
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="memory-recipe-delete-btn"
+                        onClick={() => onDeleteMemory?.(recipe.id || recipe.generationId)}
+                        title="Remove this recipe from memory"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+
+                    {/* Active References Thumbnails & Roles */}
+                    <div className="memory-recipe-refs-row">
+                      <span className="memory-recipe-sub-label">References:</span>
+                      <div className="memory-recipe-thumbs">
+                        {recipeRefIds.map((refId) => {
+                          const refObj = refMap.get(refId);
+                          const role = weights[refId] || 'auto';
+                          return (
+                            <div key={refId} className="memory-ref-thumb-box" title={refObj?.label || 'Identity Reference'}>
+                              {refObj ? (
+                                <img
+                                  src={refObj.imageUrl || refObj.dataUrl}
+                                  alt={refObj.label || 'Ref'}
+                                  className="memory-ref-thumb-img"
+                                />
+                              ) : (
+                                <div className="memory-ref-thumb-fallback">
+                                  <UserCheck size={12} />
+                                </div>
+                              )}
+                              <span className="memory-ref-role-tag">{role}</span>
+                            </div>
+                          );
+                        })}
+                        {recipeRefIds.length === 0 && (
+                          <span className="memory-no-refs-tag">Base photo only</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Endorsed Segments Chips */}
+                    {approvedSegs.length > 0 && (
+                      <div className="memory-recipe-segments-row">
+                        <span className="memory-recipe-sub-label">Endorsed:</span>
+                        <div className="memory-recipe-seg-pills">
+                          {approvedSegs.map((segId) => {
+                            const segDef = FINE_GRAINED_SEGMENTS.find((s) => s.id === segId);
+                            return (
+                              <span key={segId} className="memory-seg-pill">
+                                <Check size={10} strokeWidth={2.6} />
+                                <span>{segDef ? segDef.label : segId}</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Footer Actions */}
+                    <div className="memory-recipe-footer">
+                      <button
+                        type="button"
+                        className="memory-apply-btn"
+                        onClick={() => onApplyMemoryRecipe?.(recipe)}
+                      >
+                        <span>Apply this Recipe</span>
+                        <ArrowRight size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : (
-        <div className="identity-grid">
-          {filteredReferences.map((item) => {
-            const selected = isSelected(item.id);
-            return (
-              <div
-                key={item.id}
-                id={`identity-card-${item.id}`}
-                className={`identity-card ${selected ? 'is-selected' : ''}`}
-                onClick={() => onToggleSelect?.(item.id)}
+        /* STANDARD IDENTITY REFERENCES GRID */
+        <>
+          {filteredReferences.length === 0 ? (
+            <div className="identity-empty-state">
+              <div className="identity-empty-icon">
+                <ImagePlus size={28} />
+              </div>
+              <h3 className="identity-empty-title">
+                {activeFilter === 'favorites' ? 'No Favorite References Yet' : 'No Identity Photos Saved Yet'}
+              </h3>
+              <p className="identity-empty-desc">
+                {activeFilter === 'favorites'
+                  ? 'Tap the heart icon on any identity photo card to mark it as a favorite for quick styling selection.'
+                  : 'Upload 2 to 4 clear photos of yourself (face close-up, mirror selfie, full body, different lighting) to anchor your look across all virtual dressing room styles.'}
+              </p>
+              <button
+                type="button"
+                className="identity-upload-empty-btn"
+                onClick={() => {
+                  setActiveFilter('all');
+                  setShowUploadModal(true);
+                }}
               >
-                {/* Image Wrapper */}
-                <div className="identity-card-thumb-wrap">
-                  <img
-                    src={item.imageUrl || item.dataUrl}
-                    alt={item.label}
-                    className="identity-card-thumb"
-                  />
-                  
-                  {/* Selection Checkmark Badge */}
-                  <div className={`identity-select-badge ${selected ? 'selected' : ''}`}>
-                    {selected ? <Check size={13} strokeWidth={3} /> : <Plus size={12} />}
-                  </div>
-
-                  {/* Favorite Heart Button */}
-                  <button
-                    type="button"
-                    className={`identity-card-fav-btn ${item.favorite ? 'favorited' : ''}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onToggleFavorite?.(item.id);
-                    }}
-                    aria-label={item.favorite ? 'Unmark favorite' : 'Mark as favorite'}
+                <Plus size={16} />
+                <span>Upload Reference Photo</span>
+              </button>
+            </div>
+          ) : (
+            <div className="identity-grid">
+              {filteredReferences.map((item) => {
+                const selected = isSelected(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    id={`identity-card-${item.id}`}
+                    className={`identity-card ${selected ? 'is-selected' : ''}`}
+                    onClick={() => onToggleSelect?.(item.id)}
                   >
-                    <Heart size={13} fill={item.favorite ? '#ff4081' : 'none'} />
-                  </button>
+                    {/* Image Wrapper */}
+                    <div className="identity-card-thumb-wrap">
+                      <img
+                        src={item.imageUrl || item.dataUrl}
+                        alt={item.label}
+                        className="identity-card-thumb"
+                      />
+                      
+                      {/* Selection Checkmark Badge */}
+                      <div className={`identity-select-badge ${selected ? 'selected' : ''}`}>
+                        {selected ? <Check size={13} strokeWidth={3} /> : <Plus size={12} />}
+                      </div>
 
-                  {/* Delete Button */}
-                  <button
-                    type="button"
-                    className="identity-delete-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteReference?.(item.id);
-                    }}
-                    aria-label={`Delete ${item.label}`}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
+                      {/* Favorite Heart Button */}
+                      <button
+                        type="button"
+                        className={`identity-card-fav-btn ${item.favorite ? 'favorited' : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleFavorite?.(item.id);
+                        }}
+                        aria-label={item.favorite ? 'Unmark favorite' : 'Mark as favorite'}
+                      >
+                        <Heart size={13} fill={item.favorite ? '#ff4081' : 'none'} />
+                      </button>
 
-                {/* Metadata */}
-                <div className="identity-card-info">
-                  <div className="identity-card-header-row">
-                    <span className="identity-card-label" title={item.label}>
-                      {item.label || 'Identity Reference'}
-                    </span>
-                  </div>
+                      {/* Delete Button */}
+                      <button
+                        type="button"
+                        className="identity-delete-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteReference?.(item.id);
+                        }}
+                        aria-label={`Delete ${item.label}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
 
-                  {/* Tags */}
-                  {item.tags && item.tags.length > 0 && (
-                    <div className="identity-card-tags">
-                      {item.tags.slice(0, 2).map((t) => (
-                        <span key={t} className="identity-tag-chip">
-                          #{t}
+                    {/* Metadata */}
+                    <div className="identity-card-info">
+                      <div className="identity-card-header-row">
+                        <span className="identity-card-label" title={item.label}>
+                          {item.label || 'Identity Reference'}
                         </span>
-                      ))}
-                      {item.tags.length > 2 && (
-                        <span className="identity-tag-chip count">
-                          +{item.tags.length - 2}
-                        </span>
+                        {refStats[item.id]?.approvedCount > 0 && (
+                          <span
+                            className="identity-approved-pill"
+                            title={`User approved in ${refStats[item.id].approvedCount} edit(s)`}
+                          >
+                            <Smile size={10} />
+                            <span>{refStats[item.id].approvedCount}</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Tags */}
+                      {item.tags && item.tags.length > 0 && (
+                        <div className="identity-card-tags">
+                          {item.tags.slice(0, 2).map((t) => (
+                            <span key={t} className="identity-tag-chip">
+                              #{t}
+                            </span>
+                          ))}
+                          {item.tags.length > 2 && (
+                            <span className="identity-tag-chip count">
+                              +{item.tags.length - 2}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Notes snippet if present */}
+                      {item.notes && (
+                        <p className="identity-card-notes" title={item.notes}>
+                          {item.notes}
+                        </p>
                       )}
                     </div>
-                  )}
-
-                  {/* Notes snippet if present */}
-                  {item.notes && (
-                    <p className="identity-card-notes" title={item.notes}>
-                      {item.notes}
-                    </p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* Upload Reference Modal Sheet */}

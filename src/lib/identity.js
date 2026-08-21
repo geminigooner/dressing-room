@@ -5,6 +5,8 @@
  * tag presets, and the identity fidelity contract.
  */
 
+import { scoreMemorySynergy } from './memory.js';
+
 export const DEFAULT_IDENTITY_TAGS = [
   'face',
   'close-up',
@@ -45,7 +47,7 @@ export const IDENTITY_SEGMENT_ROLES = [
  * Helper to compute relevance recommendation score based on tags, notes, and prompt keywords.
  * Keeps manual user selection as authoritative while providing helpful visual cues.
  */
-export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto') {
+export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto', selectedIds = []) {
   if (!item) return 0;
   let score = 0;
   const tags = Array.isArray(item.tags) ? item.tags : [];
@@ -55,7 +57,7 @@ export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto
   // Favorite boost
   if (item.favorite) score += 15;
 
-  // Segment-specific relevance
+  // Segment-specific relevance (Primary visual relevance)
   if (activeSegment === 'face') {
     if (tags.includes('face') || tags.includes('close-up')) score += 30;
     if (tags.includes('neutral') || tags.includes('bright lighting')) score += 10;
@@ -71,7 +73,7 @@ export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto
     if (tags.includes('full body') || tags.includes('mirror selfie')) score += 15;
   }
 
-  // Prompt keyword synergy
+  // Prompt keyword synergy (Primary visual relevance)
   if (lowerPrompt.includes('headshot') || lowerPrompt.includes('face') || lowerPrompt.includes('makeup') || lowerPrompt.includes('earring') || lowerPrompt.includes('glasses')) {
     if (tags.includes('face') || tags.includes('close-up')) score += 15;
   }
@@ -81,6 +83,10 @@ export function scoreReferenceRelevance(item, prompt = '', activeSegment = 'auto
   if (lowerPrompt.includes('hair') || lowerPrompt.includes('hairstyle') || lowerPrompt.includes('bangs') || lowerPrompt.includes('updo')) {
     if (tags.includes('face') || textCorpus.includes('hair')) score += 15;
   }
+
+  // Secondary Preference: User-Approved Edit Memory synergy (capped so visual relevance dominates)
+  const memoryBonus = scoreMemorySynergy(item, prompt, selectedIds, activeSegment);
+  score += memoryBonus;
 
   return score;
 }

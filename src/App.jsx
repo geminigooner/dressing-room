@@ -19,7 +19,9 @@ import {
   Check,
   Calendar,
   ExternalLink,
-  UserCheck
+  UserCheck,
+  Smile,
+  CheckCircle2
 } from 'lucide-react';
 import { editPhoto, fileToPart, imageSourceToPart, fetchGallery, saveToGallery, deleteFromGallery } from './lib/api.js';
 import {
@@ -32,6 +34,15 @@ import {
   saveSegmentWeights,
   DEFAULT_IDENTITY_CONTRACT,
 } from './lib/identity.js';
+import {
+  getSuccessfulEditsMemory,
+  recordSuccessfulEdit,
+  unrecordSuccessfulEdit,
+  updateApprovedSegments,
+  deleteSuccessfulEdit,
+  generateMemoryInsightsSummary,
+  FINE_GRAINED_SEGMENTS,
+} from './lib/memory.js';
 import GeminiAssistantSheet from './components/GeminiAssistantSheet.jsx';
 import IdentityBank from './components/IdentityBank.jsx';
 import IdentityReferenceSelector from './components/IdentityReferenceSelector.jsx';
@@ -55,6 +66,13 @@ export default function App() {
   const [selectedIdentityIds, setSelectedIdentityIds] = useState([]);
   const [segmentWeights, setSegmentWeights] = useState({}); // { [refId]: 'auto' | 'face' | 'hair' | 'body' }
   const [identityContract] = useState(DEFAULT_IDENTITY_CONTRACT);
+
+  // Successful Edit Memory State
+  const [successfulEdits, setSuccessfulEdits] = useState([]);
+  const [currentGenerationData, setCurrentGenerationData] = useState(null);
+  const [isCurrentApproved, setIsCurrentApproved] = useState(false);
+  const [currentApprovedSegments, setCurrentApprovedSegments] = useState([]);
+  const [approvalToast, setApprovalToast] = useState(false);
 
   // Gallery state
   const [galleryItems, setGalleryItems] = useState([]);
@@ -94,6 +112,9 @@ export default function App() {
       })),
     segmentWeights,
     identityContract,
+    successMemoryCount: successfulEdits.length,
+    isCurrentResultApproved: isCurrentApproved,
+    memoryInsights: generateMemoryInsightsSummary(successfulEdits, identityReferences, prompt),
     prompt: prompt || '',
     isGenerating: isLoading,
     hasResultImage: Boolean(resultImage),
@@ -112,16 +133,18 @@ export default function App() {
     lastErrorMessage: errorMessage,
   };
 
-  // Load saved gallery looks and identity references on mount (survives refresh)
+  // Load saved gallery looks, identity references, and successful edit memory on mount (survives refresh)
   useEffect(() => {
     async function loadInitialData() {
       try {
-        const [items, idRefs] = await Promise.all([
+        const [items, idRefs, memories] = await Promise.all([
           fetchGallery(),
           getIdentityReferences(),
+          getSuccessfulEditsMemory(),
         ]);
         setGalleryItems(items || []);
         setIdentityReferences(idRefs || []);
+        setSuccessfulEdits(memories || []);
 
         const savedSelectedIds = getSelectedIdentityIds();
         if (savedSelectedIds && savedSelectedIds.length > 0) {
@@ -267,6 +290,7 @@ export default function App() {
     setResultText(null);
     setErrorMessage(null);
     setSaveSuccess(false);
+    setIsCurrentApproved(false);
 
     try {
       // 1. Convert photo inputs to parts
@@ -287,6 +311,20 @@ export default function App() {
           identityParts.push(part);
         }
       }
+
+      // Generate a tracking ID for this run
+      const genId = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const genMeta = {
+        generationId: genId,
+        prompt: effectivePrompt,
+        basePhotoContext: basePhoto?.name || (basePhotoPreview ? 'Uploaded photo' : 'Base photo'),
+        identityRefIds: activeIdentityRefs.map((r) => r.id),
+        segmentWeights: { ...segmentWeights },
+        manualOverrides: selectedIdentityIds.length > 0,
+        hasOutfitReference: Boolean(outfitPhoto),
+        identityTags: activeIdentityRefs.flatMap((r) => r.tags || []),
+      };
+      setCurrentGenerationData(genMeta);
 
       // 3. Call editPhoto from api.js (proxied to /api/gemini) with identity references
       const response = await editPhoto(photoPart, garmentPart, effectivePrompt, identityParts);
@@ -325,6 +363,93 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Toggle "Looks like me" User Approval for Successful Edit Memory
+  const handleToggleLooksLikeMe = async () => {
+    if (!currentGenerationData || !resultImage) return;
+
+    try {
+      if (isCurrentApproved) {
+        await unrecordSuccessfulEdit(currentGenerationData.generationId);
+        setIsCurrentApproved(false);
+        setCurrentApprovedSegments([]);
+        const updated = await getSuccessfulEditsMemory();
+        setSuccessfulEdits(updated);
+      } else {
+        await recordSuccessfulEdit({
+          ...currentGenerationData,
+          approvedSegments: currentApprovedSegments,
+        });
+        setIsCurrentApproved(true);
+        setApprovalToast(true);
+        setTimeout(() => setApprovalToast(false), 3000);
+        const updated = await getSuccessfulEditsMemory();
+        setSuccessfulEdits(updated);
+      }
+    } catch (err) {
+      console.error('Failed to toggle approval memory:', err);
+    }
+  };
+
+  // Toggle fine-grained segment feedback on an approved result
+  const handleToggleSegmentFeedback = async (segmentId) => {
+    if (!currentGenerationData || !isCurrentApproved) return;
+    const nextSegments = currentApprovedSegments.includes(segmentId)
+      ? currentApprovedSegments.filter((s) => s !== segmentId)
+      : [...currentApprovedSegments, segmentId];
+
+    setCurrentApprovedSegments(nextSegments);
+    try {
+      await updateApprovedSegments(currentGenerationData.generationId, nextSegments);
+      const updated = await getSuccessfulEditsMemory();
+      setSuccessfulEdits(updated);
+    } catch (err) {
+      console.error('Failed to update segment feedback:', err);
+    }
+  };
+
+  // Delete a memory record
+  const handleDeleteMemory = async (memoryOrGenId) => {
+    try {
+      await deleteSuccessfulEdit(memoryOrGenId);
+      if (currentGenerationData && (currentGenerationData.generationId === memoryOrGenId)) {
+        setIsCurrentApproved(false);
+        setCurrentApprovedSegments([]);
+      }
+      const updated = await getSuccessfulEditsMemory();
+      setSuccessfulEdits(updated);
+    } catch (err) {
+      console.error('Failed to delete memory record:', err);
+    }
+  };
+
+  // Apply recipe from memory bank to active Create setup
+  const handleApplyMemoryRecipe = (recipe) => {
+    if (!recipe || !Array.isArray(recipe.identityRefIds)) return;
+
+    // Filter valid reference IDs that currently exist in the bank
+    const validIds = recipe.identityRefIds.filter((id) =>
+      identityReferences.some((r) => r.id === id)
+    );
+
+    if (validIds.length > 0) {
+      setSelectedIdentityIds(validIds);
+      saveSelectedIdentityIds(validIds);
+    }
+
+    if (recipe.segmentWeights && typeof recipe.segmentWeights === 'object') {
+      const mergedWeights = { ...segmentWeights, ...recipe.segmentWeights };
+      setSegmentWeights(mergedWeights);
+      saveSegmentWeights(mergedWeights);
+    }
+
+    if (recipe.prompt && !prompt) {
+      setPrompt(recipe.prompt);
+    }
+
+    setActiveTab('create');
+    setActiveNav('create');
   };
 
   // Save generated look to Gallery (R2 for image + D1 for metadata)
@@ -796,6 +921,66 @@ export default function App() {
             </div>
 
             {/* Action Buttons */}
+            {resultImage && (
+              <div className="result-approval-row">
+                <button
+                  type="button"
+                  id="btn-looks-like-me"
+                  className={`result-looks-like-me-btn ${isCurrentApproved ? 'approved' : ''}`}
+                  onClick={handleToggleLooksLikeMe}
+                  title={
+                    isCurrentApproved
+                      ? 'Approved! Explicitly remembered as a high-fidelity result.'
+                      : 'Explicitly mark this result as accurately preserving your identity'
+                  }
+                >
+                  {isCurrentApproved ? (
+                    <>
+                      <Check size={14} strokeWidth={2.6} className="approval-icon" />
+                      <span className="approval-title">Looks like me</span>
+                      <span className="approval-status-pill">Saved to memory</span>
+                    </>
+                  ) : (
+                    <>
+                      <Smile size={14} className="approval-icon" />
+                      <span className="approval-title">Looks like me</span>
+                      <span className="approval-sub">Remember what worked</span>
+                    </>
+                  )}
+                </button>
+
+                {isCurrentApproved && (
+                  <div className="approval-segment-feedback-wrap">
+                    <span className="approval-segment-title">What preserved your look best? (Optional)</span>
+                    <div className="approval-segment-chips-grid">
+                      {FINE_GRAINED_SEGMENTS.map((seg) => {
+                        const isSelected = currentApprovedSegments.includes(seg.id);
+                        return (
+                          <button
+                            key={seg.id}
+                            type="button"
+                            className={`approval-segment-chip ${isSelected ? 'active' : ''}`}
+                            onClick={() => handleToggleSegmentFeedback(seg.id)}
+                            title={seg.description}
+                          >
+                            {isSelected && <Check size={10} strokeWidth={2.6} />}
+                            <span>{seg.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {approvalToast && (
+                  <div className="approval-toast-banner" role="status">
+                    <CheckCircle2 size={12} />
+                    <span>Saved to Edit Memory! References will learn what worked.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="result-actions-grid">
               <button
                 type="button"
@@ -896,10 +1081,13 @@ export default function App() {
           identityReferences={identityReferences}
           selectedIdentityIds={selectedIdentityIds}
           identityContract={identityContract}
+          successfulEdits={successfulEdits}
           onSaveReference={handleSaveIdentityReference}
           onDeleteReference={handleDeleteIdentityReference}
           onToggleSelect={handleToggleSelectIdentity}
           onToggleFavorite={handleToggleFavoriteIdentity}
+          onDeleteMemory={handleDeleteMemory}
+          onApplyMemoryRecipe={handleApplyMemoryRecipe}
           onGoToCreate={() => {
             setActiveTab('create');
             setActiveNav('create');

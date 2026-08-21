@@ -2835,6 +2835,451 @@ html, body {
   line-height: 1;
 }
 
+/* ==========================================================================
+   Successful Edit Memory System ("Looks like me" User Approval)
+   ========================================================================== */
+
+.result-approval-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.result-looks-like-me-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  border-radius: var(--radius-pill);
+  background: #FFF8FA;
+  border: 1px solid #FFD4E2;
+  color: var(--accent-pink-dark);
+  font-family: var(--font-family-base);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 14px;
+  transition: var(--transition-smooth);
+}
+
+.result-looks-like-me-btn:hover {
+  background: #FFF0F5;
+  border-color: #E6346A;
+  transform: translateY(-1px);
+}
+
+.result-looks-like-me-btn.approved {
+  background: linear-gradient(135deg, #E6346A 0%, #D81B60 100%);
+  border-color: #C2185B;
+  color: #FFFFFF;
+  box-shadow: 0 3px 10px rgba(230, 52, 106, 0.28);
+}
+
+.result-looks-like-me-btn.approved:hover {
+  background: linear-gradient(135deg, #D81B60 0%, #C2185B 100%);
+  box-shadow: 0 4px 14px rgba(230, 52, 106, 0.35);
+}
+
+.approval-icon {
+  flex-shrink: 0;
+}
+
+.approval-title {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.approval-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+.approval-status-pill {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.22);
+  color: #FFFFFF;
+  padding: 2px 7px;
+  border-radius: 10px;
+  margin-left: 4px;
+  letter-spacing: 0.02em;
+}
+
+.approval-toast-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: #FFF0F5;
+  border: 1px solid #FFCCD8;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #C2185B;
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Reference Card & Picker Approved Badges */
+.identity-approved-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #FFF0F5;
+  border: 1px solid #FFCCD8;
+  color: #D81B60;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.quick-picker-approved-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: #FFF0F5;
+  border: 1px solid #FFCCD8;
+  color: #D81B60;
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 4px;
+  line-height: 1.2;
+}
+
+/* Fine-Grained Segment Feedback in Result Card */
+.approval-segment-feedback-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #FFF8FA;
+  border: 1px dashed #FFD4E2;
+  border-radius: 10px;
+  padding: 8px 10px;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.approval-segment-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-pink-dark);
+}
+
+.approval-segment-chips-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.approval-segment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: #FFFFFF;
+  border: 1px solid #FFD4E2;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.approval-segment-chip:hover {
+  background: #FFF0F5;
+  border-color: var(--accent-pink);
+  color: var(--accent-pink-dark);
+}
+
+.approval-segment-chip.active {
+  background: #E6346A;
+  border-color: #D81B60;
+  color: #FFFFFF;
+  font-weight: 600;
+}
+
+/* Memory Inspection Panel */
+.memory-inspection-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.memory-overview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, #FFF9FB 0%, #FFF2F6 100%);
+  border: 1px solid #FFDCE6;
+  border-radius: var(--radius-card);
+  padding: 12px 18px;
+  overflow-x: auto;
+  gap: 12px;
+}
+
+.memory-overview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.memory-overview-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.memory-overview-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent-pink-dark);
+}
+
+.memory-overview-divider {
+  width: 1px;
+  height: 24px;
+  background: #FFD4E2;
+  flex-shrink: 0;
+}
+
+.memory-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #FFFFFF;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-pill);
+  padding: 6px 12px;
+}
+
+.memory-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--text-primary);
+}
+
+.memory-search-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+/* Memory Recipe Grid & Cards */
+.memory-recipes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 12px;
+}
+
+.memory-recipe-card {
+  background: #FFFFFF;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: var(--transition-smooth);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.memory-recipe-card:hover {
+  border-color: #FFCCD8;
+  box-shadow: 0 4px 14px rgba(230, 52, 106, 0.08);
+}
+
+.memory-recipe-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.memory-recipe-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.memory-recipe-prompt {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.memory-recipe-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.memory-recipe-delete-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-smooth);
+  flex-shrink: 0;
+}
+
+.memory-recipe-delete-btn:hover {
+  background: #FFF0F3;
+  color: #E6346A;
+}
+
+.memory-recipe-refs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-recipe-sub-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  width: 65px;
+  flex-shrink: 0;
+}
+
+.memory-recipe-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.memory-ref-thumb-box {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-card);
+  flex-shrink: 0;
+}
+
+.memory-ref-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.memory-ref-thumb-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card-subtle);
+  color: var(--text-muted);
+}
+
+.memory-ref-role-tag {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.65);
+  color: #FFFFFF;
+  font-size: 7.5px;
+  font-weight: 700;
+  text-align: center;
+  text-transform: capitalize;
+  line-height: 1.1;
+  padding: 1px 0;
+}
+
+.memory-no-refs-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.memory-recipe-segments-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-recipe-seg-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.memory-seg-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #E8F8EE;
+  border: 1px solid #B8E8CD;
+  color: #0E8345;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
+.memory-recipe-footer {
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.memory-apply-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #FFF0F5;
+  border: 1px solid #FFCCD8;
+  color: var(--accent-pink-dark);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.memory-apply-btn:hover {
+  background: var(--accent-pink);
+  border-color: var(--accent-pink-dark);
+  color: #FFFFFF;
+  transform: translateY(-1px);
+}
+
+
 
 
 

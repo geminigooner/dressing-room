@@ -16,6 +16,7 @@ import {
   Flame
 } from 'lucide-react';
 import { IDENTITY_SEGMENT_ROLES, scoreReferenceRelevance } from '../lib/identity.js';
+import { getAllReferenceSuccessStats } from '../lib/memory.js';
 
 export default function IdentityReferenceSelector({
   identityReferences = [],
@@ -54,10 +55,12 @@ export default function IdentityReferenceSelector({
     return role ? role.label.split(' / ')[0] : 'Balanced';
   };
 
-  // Sort references in quick picker with relevance cues
+  const refStats = getAllReferenceSuccessStats();
+
+  // Sort references in quick picker with relevance cues & secondary memory synergy
   const scoredReferences = [...identityReferences].map((item) => ({
     ...item,
-    relevanceScore: scoreReferenceRelevance(item, prompt, activeFilterSegment),
+    relevanceScore: scoreReferenceRelevance(item, prompt, activeFilterSegment, selectedIdentityIds),
   })).sort((a, b) => {
     // Selected first, then highest score
     const aSel = selectedIdentityIds.includes(a.id);
@@ -306,6 +309,12 @@ export default function IdentityReferenceSelector({
                     <div className="quick-picker-tag-row">
                       {item.tags && item.tags.length > 0 && (
                         <span className="quick-picker-tag">#{item.tags[0]}</span>
+                      )}
+                      {refStats[item.id]?.approvedCount > 0 && (
+                        <span className="quick-picker-approved-pill" title={`Approved in ${refStats[item.id].approvedCount} edit(s)`}>
+                          <Smile size={9} />
+                          <span>{refStats[item.id].approvedCount}</span>
+                        </span>
                       )}
                       {item.favorite && <span className="quick-picker-fav-dot" title="Favorite">★</span>}
                     </div>
